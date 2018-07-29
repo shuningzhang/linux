@@ -14,6 +14,19 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
+
+/*
+ * 头文件的数据结构描述了文件系统在磁盘布局的大部分内容。在EXT4文件系统，磁盘被划分为若干个块组（Block Group）,块组中又包含超级快，块组描述符和位图等信息。其中块组如下所示：
+ * ---------------
+ * |Block Group 0|
+ * |Block Group 1|
+ * |Block Group 2|
+ * ---------------
+ *  -------------------------------
+ *  |Boot Block |  Super Block    |
+ *
+ * */
+
 #ifndef _EXT4_H
 #define _EXT4_H
 
@@ -288,7 +301,9 @@ struct ext4_io_submit {
 				 ((ext4_fsblk_t) (s)->s_cluster_ratio - 1))
 #define EXT4_LBLK_COFF(s, lblk) ((lblk) &				\
 				 ((ext4_lblk_t) (s)->s_cluster_ratio - 1))
-
+/*
+ *
+ * */
 /*
  * Structure of a blocks group descriptor
  */
@@ -679,7 +694,7 @@ enum {
  * Structure of an inode on the disk
  */
 struct ext4_inode {
-	__le16	i_mode;		/* File mode */
+	__le16	i_mode;		/* 文件打开的模式 */
 	__le16	i_uid;		/* Low 16 bits of Owner Uid */
 	__le32	i_size_lo;	/* Size in bytes */
 	__le32	i_atime;	/* Access time */
