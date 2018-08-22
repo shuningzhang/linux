@@ -48,7 +48,6 @@
 #include <linux/stat.h>
 #include <linux/module.h>
 #include <linux/uio.h>
-#include <linux/user_namespace.h>
 
 #include "fuse_i.h"
 
@@ -91,7 +90,7 @@ static struct list_head *cuse_conntbl_head(dev_t devt)
 
 static ssize_t cuse_read_iter(struct kiocb *kiocb, struct iov_iter *to)
 {
-	struct fuse_io_priv io = FUSE_IO_PRIV_SYNC(kiocb);
+	struct fuse_io_priv io = { .async = 0, .file = kiocb->ki_filp };
 	loff_t pos = 0;
 
 	return fuse_direct_io(&io, to, &pos, FUSE_DIO_CUSE);
@@ -99,7 +98,7 @@ static ssize_t cuse_read_iter(struct kiocb *kiocb, struct iov_iter *to)
 
 static ssize_t cuse_write_iter(struct kiocb *kiocb, struct iov_iter *from)
 {
-	struct fuse_io_priv io = FUSE_IO_PRIV_SYNC(kiocb);
+	struct fuse_io_priv io = { .async = 0, .file = kiocb->ki_filp };
 	loff_t pos = 0;
 	/*
 	 * No locking or generic_write_checks(), the server is
@@ -407,7 +406,7 @@ err_unlock:
 err_region:
 	unregister_chrdev_region(devt, 1);
 err:
-	fuse_abort_conn(fc, false);
+	fuse_abort_conn(fc);
 	goto out;
 }
 
@@ -490,7 +489,6 @@ static void cuse_fc_release(struct fuse_conn *fc)
  */
 static int cuse_channel_open(struct inode *inode, struct file *file)
 {
-	struct fuse_dev *fud;
 	struct cuse_conn *cc;
 	int rc;
 
@@ -499,28 +497,19 @@ static int cuse_channel_open(struct inode *inode, struct file *file)
 	if (!cc)
 		return -ENOMEM;
 
-	/*
-	 * Limit the cuse channel to requests that can
-	 * be represented in file->f_cred->user_ns.
-	 */
-	fuse_conn_init(&cc->fc, file->f_cred->user_ns);
-
-	fud = fuse_dev_alloc(&cc->fc);
-	if (!fud) {
-		kfree(cc);
-		return -ENOMEM;
-	}
+	fuse_conn_init(&cc->fc);
 
 	INIT_LIST_HEAD(&cc->list);
 	cc->fc.release = cuse_fc_release;
 
+	cc->fc.connected = 1;
 	cc->fc.initialized = 1;
 	rc = cuse_send_init(cc);
 	if (rc) {
-		fuse_dev_free(fud);
+		fuse_conn_put(&cc->fc);
 		return rc;
 	}
-	file->private_data = fud;
+	file->private_data = &cc->fc;	/* channel owns base reference to cc */
 
 	return 0;
 }
@@ -538,8 +527,7 @@ static int cuse_channel_open(struct inode *inode, struct file *file)
  */
 static int cuse_channel_release(struct inode *inode, struct file *file)
 {
-	struct fuse_dev *fud = file->private_data;
-	struct cuse_conn *cc = fc_to_cc(fud->fc);
+	struct cuse_conn *cc = fc_to_cc(file->private_data);
 	int rc;
 
 	/* remove from the conntbl, no more access from this point on */
@@ -554,8 +542,6 @@ static int cuse_channel_release(struct inode *inode, struct file *file)
 		unregister_chrdev_region(cc->cdev->dev, 1);
 		cdev_del(cc->cdev);
 	}
-	/* Base reference is now owned by "fud" */
-	fuse_conn_put(&cc->fc);
 
 	rc = fuse_dev_release(inode, file);	/* puts the base reference */
 
@@ -586,7 +572,7 @@ static ssize_t cuse_class_abort_store(struct device *dev,
 {
 	struct cuse_conn *cc = dev_get_drvdata(dev);
 
-	fuse_abort_conn(&cc->fc, false);
+	fuse_abort_conn(&cc->fc);
 	return count;
 }
 static DEVICE_ATTR(abort, 0200, NULL, cuse_class_abort_store);

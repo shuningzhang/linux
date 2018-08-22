@@ -51,25 +51,9 @@ struct uhid_device {
 	u32 report_id;
 	u32 report_type;
 	struct uhid_event report_buf;
-	struct work_struct worker;
 };
 
 static struct miscdevice uhid_misc;
-
-static void uhid_device_add_worker(struct work_struct *work)
-{
-	struct uhid_device *uhid = container_of(work, struct uhid_device, worker);
-	int ret;
-
-	ret = hid_add_device(uhid->hid);
-	if (ret) {
-		hid_err(uhid->hid, "Cannot register HID device: error %d\n", ret);
-
-		hid_destroy_device(uhid->hid);
-		uhid->hid = NULL;
-		uhid->running = false;
-	}
-}
 
 static void uhid_queue(struct uhid_device *uhid, struct uhid_event *ev)
 {
@@ -369,7 +353,7 @@ static int uhid_hid_output_report(struct hid_device *hid, __u8 *buf,
 	return uhid_hid_output_raw(hid, buf, count, HID_OUTPUT_REPORT);
 }
 
-struct hid_ll_driver uhid_hid_driver = {
+static struct hid_ll_driver uhid_hid_driver = {
 	.start = uhid_hid_start,
 	.stop = uhid_hid_stop,
 	.open = uhid_hid_open,
@@ -378,7 +362,6 @@ struct hid_ll_driver uhid_hid_driver = {
 	.raw_request = uhid_hid_raw_request,
 	.output_report = uhid_hid_output_report,
 };
-EXPORT_SYMBOL_GPL(uhid_hid_driver);
 
 #ifdef CONFIG_COMPAT
 
@@ -401,7 +384,7 @@ struct uhid_create_req_compat {
 static int uhid_event_from_user(const char __user *buffer, size_t len,
 				struct uhid_event *event)
 {
-	if (in_compat_syscall()) {
+	if (is_compat_task()) {
 		u32 type;
 
 		if (get_user(type, buffer))
@@ -496,12 +479,12 @@ static int uhid_dev_create2(struct uhid_device *uhid,
 		goto err_free;
 	}
 
-	len = min(sizeof(hid->name), sizeof(ev->u.create2.name));
-	strlcpy(hid->name, ev->u.create2.name, len);
-	len = min(sizeof(hid->phys), sizeof(ev->u.create2.phys));
-	strlcpy(hid->phys, ev->u.create2.phys, len);
-	len = min(sizeof(hid->uniq), sizeof(ev->u.create2.uniq));
-	strlcpy(hid->uniq, ev->u.create2.uniq, len);
+	len = min(sizeof(hid->name), sizeof(ev->u.create2.name)) - 1;
+	strncpy(hid->name, ev->u.create2.name, len);
+	len = min(sizeof(hid->phys), sizeof(ev->u.create2.phys)) - 1;
+	strncpy(hid->phys, ev->u.create2.phys, len);
+	len = min(sizeof(hid->uniq), sizeof(ev->u.create2.uniq)) - 1;
+	strncpy(hid->uniq, ev->u.create2.uniq, len);
 
 	hid->ll_driver = &uhid_hid_driver;
 	hid->bus = ev->u.create2.bus;
@@ -515,14 +498,18 @@ static int uhid_dev_create2(struct uhid_device *uhid,
 	uhid->hid = hid;
 	uhid->running = true;
 
-	/* Adding of a HID device is done through a worker, to allow HID drivers
-	 * which use feature requests during .probe to work, without they would
-	 * be blocked on devlock, which is held by uhid_char_write.
-	 */
-	schedule_work(&uhid->worker);
+	ret = hid_add_device(hid);
+	if (ret) {
+		hid_err(hid, "Cannot register HID device\n");
+		goto err_hid;
+	}
 
 	return 0;
 
+err_hid:
+	hid_destroy_device(hid);
+	uhid->hid = NULL;
+	uhid->running = false;
 err_free:
 	kfree(uhid->rd_data);
 	uhid->rd_data = NULL;
@@ -562,8 +549,6 @@ static int uhid_dev_destroy(struct uhid_device *uhid)
 
 	uhid->running = false;
 	wake_up_interruptible(&uhid->report_wait);
-
-	cancel_work_sync(&uhid->worker);
 
 	hid_destroy_device(uhid->hid);
 	kfree(uhid->rd_data);
@@ -627,7 +612,6 @@ static int uhid_char_open(struct inode *inode, struct file *file)
 	init_waitqueue_head(&uhid->waitq);
 	init_waitqueue_head(&uhid->report_wait);
 	uhid->running = false;
-	INIT_WORK(&uhid->worker, uhid_device_add_worker);
 
 	file->private_data = uhid;
 	nonseekable_open(inode, file);
@@ -753,14 +737,14 @@ unlock:
 	return ret ? ret : count;
 }
 
-static __poll_t uhid_char_poll(struct file *file, poll_table *wait)
+static unsigned int uhid_char_poll(struct file *file, poll_table *wait)
 {
 	struct uhid_device *uhid = file->private_data;
 
 	poll_wait(file, &uhid->waitq, wait);
 
 	if (uhid->head != uhid->tail)
-		return EPOLLIN | EPOLLRDNORM;
+		return POLLIN | POLLRDNORM;
 
 	return 0;
 }
@@ -780,8 +764,19 @@ static struct miscdevice uhid_misc = {
 	.minor		= UHID_MINOR,
 	.name		= UHID_NAME,
 };
-module_misc_device(uhid_misc);
 
+static int __init uhid_init(void)
+{
+	return misc_register(&uhid_misc);
+}
+
+static void __exit uhid_exit(void)
+{
+	misc_deregister(&uhid_misc);
+}
+
+module_init(uhid_init);
+module_exit(uhid_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("David Herrmann <dh.herrmann@gmail.com>");
 MODULE_DESCRIPTION("User-space I/O driver support for HID subsystem");

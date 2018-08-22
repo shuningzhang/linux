@@ -487,18 +487,18 @@ static int tegra_devfreq_target(struct device *dev, unsigned long *freq,
 	struct dev_pm_opp *opp;
 	unsigned long rate = *freq * KHZ;
 
+	rcu_read_lock();
 	opp = devfreq_recommended_opp(dev, &rate, flags);
 	if (IS_ERR(opp)) {
+		rcu_read_unlock();
 		dev_err(dev, "Failed to find opp for %lu KHz\n", *freq);
 		return PTR_ERR(opp);
 	}
 	rate = dev_pm_opp_get_freq(opp);
-	dev_pm_opp_put(opp);
+	rcu_read_unlock();
 
 	clk_set_min_rate(tegra->emc_clock, rate);
 	clk_set_rate(tegra->emc_clock, 0);
-
-	*freq = rate;
 
 	return 0;
 }
@@ -541,20 +541,18 @@ static struct devfreq_dev_profile tegra_devfreq_profile = {
 static int tegra_governor_get_target(struct devfreq *devfreq,
 				     unsigned long *freq)
 {
-	struct devfreq_dev_status *stat;
+	struct devfreq_dev_status stat;
 	struct tegra_devfreq *tegra;
 	struct tegra_devfreq_device *dev;
 	unsigned long target_freq = 0;
 	unsigned int i;
 	int err;
 
-	err = devfreq_update_stats(devfreq);
+	err = devfreq->profile->get_dev_status(devfreq->dev.parent, &stat);
 	if (err)
 		return err;
 
-	stat = &devfreq->last_status;
-
-	tegra = stat->private_data;
+	tegra = stat.private_data;
 
 	for (i = 0; i < ARRAY_SIZE(tegra->devices); i++) {
 		dev = &tegra->devices[i];
@@ -688,9 +686,9 @@ static int tegra_devfreq_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		dev_err(&pdev->dev, "Failed to get IRQ: %d\n", irq);
-		return irq;
+	if (irq <= 0) {
+		dev_err(&pdev->dev, "Failed to get IRQ\n");
+		return -ENODEV;
 	}
 
 	platform_set_drvdata(pdev, tegra);

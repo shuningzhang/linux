@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0
 # file format version
 FILE_VERSION = 1
 
@@ -51,7 +50,7 @@ ifndef VERBOSE
 endif
 
 ifeq ($(srctree),)
-srctree := $(patsubst %/,%,$(dir $(CURDIR)))
+srctree := $(patsubst %/,%,$(dir $(shell pwd)))
 srctree := $(patsubst %/,%,$(dir $(srctree)))
 srctree := $(patsubst %/,%,$(dir $(srctree)))
 #$(info Determined 'srctree' to be $(srctree))
@@ -80,7 +79,6 @@ INCLUDES = -I. -I./uinclude -I./include -I../../include $(CONFIG_INCLUDES)
 # Set compile option CFLAGS if not set elsewhere
 CFLAGS ?= -g -DCONFIG_LOCKDEP -DCONFIG_STACKTRACE -DCONFIG_PROVE_LOCKING -DBITS_PER_LONG=__WORDSIZE -DLIBLOCKDEP_VERSION='"$(LIBLOCKDEP_VERSION)"' -rdynamic -O0 -g
 CFLAGS += -fPIC
-CFLAGS += -Wall
 
 override CFLAGS += $(CONFIG_FLAGS) $(INCLUDES) $(PLUGIN_DIR_SQ)
 
@@ -95,14 +93,12 @@ else
   print_install =		echo '  INSTALL  '$1'	to	$(DESTDIR_SQ)$2';
 endif
 
-all:
-
 export srctree OUTPUT CC LD CFLAGS V
-include $(srctree)/tools/build/Makefile.include
+build := -f $(srctree)/tools/build/Makefile.build dir=. obj
 
 do_compile_shared_library =			\
 	($(print_shared_lib_compile)		\
-	$(CC) $(LDFLAGS) --shared $^ -o $@ -lpthread -ldl -Wl,-soname='$(@F)';$(shell ln -sf $(@F) $(@D)/liblockdep.so))
+	$(CC) --shared $^ -o $@ -lpthread -ldl -Wl,-soname='"$@"';$(shell ln -s $@ liblockdep.so))
 
 do_build_static_lib =				\
 	($(print_static_lib_build)		\
@@ -113,17 +109,17 @@ CMD_TARGETS = $(LIB_FILE)
 TARGETS = $(CMD_TARGETS)
 
 
-all: fixdep all_cmd
+all: all_cmd
 
 all_cmd: $(CMD_TARGETS)
 
 $(LIB_IN): force
 	$(Q)$(MAKE) $(build)=liblockdep
 
-$(OUTPUT)liblockdep.so.$(LIBLOCKDEP_VERSION): $(LIB_IN)
+liblockdep.so.$(LIBLOCKDEP_VERSION): $(LIB_IN)
 	$(Q)$(do_compile_shared_library)
 
-$(OUTPUT)liblockdep.a: $(LIB_IN)
+liblockdep.a: $(LIB_IN)
 	$(Q)$(do_build_static_lib)
 
 tags:	force
@@ -151,7 +147,7 @@ install_lib: all_cmd
 install: install_lib
 
 clean:
-	$(RM) $(OUTPUT)*.o *~ $(TARGETS) $(OUTPUT)*.a $(OUTPUT)*liblockdep*.so* $(VERSION_FILES) $(OUTPUT).*.d $(OUTPUT).*.cmd
+	$(RM) *.o *~ $(TARGETS) *.a *liblockdep*.so* $(VERSION_FILES) .*.d
 	$(RM) tags TAGS
 
 PHONY += force

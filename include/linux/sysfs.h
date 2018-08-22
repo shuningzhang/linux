@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * sysfs.h - definitions for the device driver filesystem
  *
@@ -65,18 +64,10 @@ do {							\
  *		a new subdirectory with this name.
  * @is_visible:	Optional: Function to return permissions associated with an
  *		attribute of the group. Will be called repeatedly for each
- *		non-binary attribute in the group. Only read/write
- *		permissions as well as SYSFS_PREALLOC are accepted. Must
- *		return 0 if an attribute is not visible. The returned value
- *		will replace static permissions defined in struct attribute.
- * @is_bin_visible:
- *		Optional: Function to return permissions associated with a
- *		binary attribute of the group. Will be called repeatedly
- *		for each binary attribute in the group. Only read/write
- *		permissions as well as SYSFS_PREALLOC are accepted. Must
- *		return 0 if a binary attribute is not visible. The returned
- *		value will replace static permissions defined in
- *		struct bin_attribute.
+ *		attribute in the group. Only read/write permissions as well as
+ *		SYSFS_PREALLOC are accepted. Must return 0 if an attribute is
+ *		not visible. The returned value will replace static permissions
+ *		defined in struct attribute or struct bin_attribute.
  * @attrs:	Pointer to NULL terminated list of attributes.
  * @bin_attrs:	Pointer to NULL terminated list of binary attributes.
  *		Either attrs or bin_attrs or both must be provided.
@@ -85,8 +76,6 @@ struct attribute_group {
 	const char		*name;
 	umode_t			(*is_visible)(struct kobject *,
 					      struct attribute *, int);
-	umode_t			(*is_bin_visible)(struct kobject *,
-						  struct bin_attribute *, int);
 	struct attribute	**attrs;
 	struct bin_attribute	**bin_attrs;
 };
@@ -113,22 +102,17 @@ struct attribute_group {
 }
 
 #define __ATTR_RO(_name) {						\
-	.attr	= { .name = __stringify(_name), .mode = 0444 },		\
-	.show	= _name##_show,						\
-}
-
-#define __ATTR_RO_MODE(_name, _mode) {					\
-	.attr	= { .name = __stringify(_name),				\
-		    .mode = VERIFY_OCTAL_PERMISSIONS(_mode) },		\
+	.attr	= { .name = __stringify(_name), .mode = S_IRUGO },	\
 	.show	= _name##_show,						\
 }
 
 #define __ATTR_WO(_name) {						\
-	.attr	= { .name = __stringify(_name), .mode = 0200 },		\
+	.attr	= { .name = __stringify(_name), .mode = S_IWUSR },	\
 	.store	= _name##_store,					\
 }
 
-#define __ATTR_RW(_name) __ATTR(_name, 0644, _name##_show, _name##_store)
+#define __ATTR_RW(_name) __ATTR(_name, (S_IWUSR | S_IRUGO),		\
+			 _name##_show, _name##_store)
 
 #define __ATTR_NULL { .attr = { .name = NULL } }
 
@@ -191,13 +175,14 @@ struct bin_attribute {
 }
 
 #define __BIN_ATTR_RO(_name, _size) {					\
-	.attr	= { .name = __stringify(_name), .mode = 0444 },		\
+	.attr	= { .name = __stringify(_name), .mode = S_IRUGO },	\
 	.read	= _name##_read,						\
 	.size	= _size,						\
 }
 
-#define __BIN_ATTR_RW(_name, _size)					\
-	__BIN_ATTR(_name, 0644, _name##_read, _name##_write, _size)
+#define __BIN_ATTR_RW(_name, _size) __BIN_ATTR(_name,			\
+				   (S_IWUSR | S_IRUGO), _name##_read,	\
+				   _name##_write, _size)
 
 #define __BIN_ATTR_NULL __ATTR_NULL
 
@@ -283,9 +268,6 @@ int sysfs_add_link_to_group(struct kobject *kobj, const char *group_name,
 			    struct kobject *target, const char *link_name);
 void sysfs_remove_link_from_group(struct kobject *kobj, const char *group_name,
 				  const char *link_name);
-int __compat_only_sysfs_link_entry_to_kobj(struct kobject *kobj,
-				      struct kobject *target_kobj,
-				      const char *target_name);
 
 void sysfs_notify(struct kobject *kobj, const char *dir, const char *attr);
 
@@ -469,14 +451,6 @@ static inline void sysfs_remove_link_from_group(struct kobject *kobj,
 {
 }
 
-static inline int __compat_only_sysfs_link_entry_to_kobj(
-	struct kobject *kobj,
-	struct kobject *target_kobj,
-	const char *target_name)
-{
-	return 0;
-}
-
 static inline void sysfs_notify(struct kobject *kobj, const char *dir,
 				const char *attr)
 {
@@ -517,7 +491,7 @@ static inline void sysfs_notify_dirent(struct kernfs_node *kn)
 }
 
 static inline struct kernfs_node *sysfs_get_dirent(struct kernfs_node *parent,
-						   const char *name)
+						   const unsigned char *name)
 {
 	return kernfs_find_and_get(parent, name);
 }

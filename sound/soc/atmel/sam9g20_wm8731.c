@@ -95,9 +95,8 @@ static const struct snd_soc_dapm_widget at91sam9g20ek_dapm_widgets[] = {
 
 static const struct snd_soc_dapm_route intercon[] = {
 
-	/* speaker connected to LHPOUT/RHPOUT */
+	/* speaker connected to LHPOUT */
 	{"Ext Spk", NULL, "LHPOUT"},
-	{"Ext Spk", NULL, "RHPOUT"},
 
 	/* mic is connected to Mic Jack, with WM8731 Mic Bias */
 	{"MICIN", NULL, "Mic Bias"},
@@ -109,18 +108,25 @@ static const struct snd_soc_dapm_route intercon[] = {
  */
 static int at91sam9g20ek_wm8731_init(struct snd_soc_pcm_runtime *rtd)
 {
+	struct snd_soc_codec *codec = rtd->codec;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
-	struct device *dev = rtd->dev;
+	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	int ret;
 
-	dev_dbg(dev, "%s called\n", __func__);
+	printk(KERN_DEBUG
+			"at91sam9g20ek_wm8731 "
+			": at91sam9g20ek_wm8731_init() called\n");
 
 	ret = snd_soc_dai_set_sysclk(codec_dai, WM8731_SYSCLK_MCLK,
-				     MCLK_RATE, SND_SOC_CLOCK_IN);
+		MCLK_RATE, SND_SOC_CLOCK_IN);
 	if (ret < 0) {
-		dev_err(dev, "Failed to set WM8731 SYSCLK: %d\n", ret);
+		printk(KERN_ERR "Failed to set WM8731 SYSCLK: %d\n", ret);
 		return ret;
 	}
+
+	/* not connected */
+	snd_soc_dapm_nc_pin(dapm, "RLINEIN");
+	snd_soc_dapm_nc_pin(dapm, "LLINEIN");
 
 #ifndef ENABLE_MIC_INPUT
 	snd_soc_dapm_nc_pin(&rtd->card->dapm, "Int Mic");
@@ -152,7 +158,6 @@ static struct snd_soc_card snd_soc_at91sam9g20ek = {
 	.num_dapm_widgets = ARRAY_SIZE(at91sam9g20ek_dapm_widgets),
 	.dapm_routes = intercon,
 	.num_dapm_routes = ARRAY_SIZE(intercon),
-	.fully_routed = true,
 };
 
 static int at91sam9g20ek_audio_probe(struct platform_device *pdev)
@@ -178,21 +183,21 @@ static int at91sam9g20ek_audio_probe(struct platform_device *pdev)
 	 */
 	mclk = clk_get(NULL, "pck0");
 	if (IS_ERR(mclk)) {
-		dev_err(&pdev->dev, "Failed to get MCLK\n");
+		printk(KERN_ERR "ASoC: Failed to get MCLK\n");
 		ret = PTR_ERR(mclk);
 		goto err;
 	}
 
 	pllb = clk_get(NULL, "pllb");
 	if (IS_ERR(pllb)) {
-		dev_err(&pdev->dev, "Failed to get PLLB\n");
+		printk(KERN_ERR "ASoC: Failed to get PLLB\n");
 		ret = PTR_ERR(pllb);
 		goto err_mclk;
 	}
 	ret = clk_set_parent(mclk, pllb);
 	clk_put(pllb);
 	if (ret != 0) {
-		dev_err(&pdev->dev, "Failed to set MCLK parent\n");
+		printk(KERN_ERR "ASoC: Failed to set MCLK parent\n");
 		goto err_mclk;
 	}
 
@@ -235,7 +240,7 @@ static int at91sam9g20ek_audio_probe(struct platform_device *pdev)
 
 	ret = snd_soc_register_card(card);
 	if (ret) {
-		dev_err(&pdev->dev, "snd_soc_register_card() failed\n");
+		printk(KERN_ERR "ASoC: snd_soc_register_card() failed\n");
 	}
 
 	return ret;

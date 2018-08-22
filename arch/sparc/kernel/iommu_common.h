@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /* iommu_common.h: UltraSparc SBUS/PCI common iommu declarations.
  *
  * Copyright (C) 1999, 2008 David S. Miller (davem@davemloft.net)
@@ -16,6 +15,7 @@
 #include <linux/iommu-helper.h>
 
 #include <asm/iommu.h>
+#include <asm/scatterlist.h>
 
 /*
  * These give mapping size of each iommu pte/tlb.
@@ -47,7 +47,5 @@ static inline int is_span_boundary(unsigned long entry,
 
 	return iommu_is_span_boundary(entry, nr, shift, boundary_size);
 }
-
-#define SPARC_MAPPING_ERROR	(~(dma_addr_t)0x0)
 
 #endif /* _IOMMU_COMMON_H */

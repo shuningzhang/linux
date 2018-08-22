@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *	fs/proc/kcore.c kernel ELF core dumper
  *
@@ -24,12 +23,11 @@
 #include <linux/bootmem.h>
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/io.h>
 #include <linux/list.h>
 #include <linux/ioport.h>
 #include <linux/memory.h>
-#include <linux/sched/task.h>
 #include <asm/sections.h>
 #include "internal.h"
 
@@ -94,7 +92,7 @@ static size_t get_kcore_size(int *nphdr, size_t *elf_buflen)
 			     roundup(sizeof(CORE_STR), 4)) +
 			roundup(sizeof(struct elf_prstatus), 4) +
 			roundup(sizeof(struct elf_prpsinfo), 4) +
-			roundup(arch_task_struct_size, 4);
+			roundup(sizeof(struct task_struct), 4);
 	*elf_buflen = PAGE_ALIGN(*elf_buflen);
 	return size + *elf_buflen;
 }
@@ -209,34 +207,25 @@ kclist_add_private(unsigned long pfn, unsigned long nr_pages, void *arg)
 {
 	struct list_head *head = (struct list_head *)arg;
 	struct kcore_list *ent;
-	struct page *p;
-
-	if (!pfn_valid(pfn))
-		return 1;
-
-	p = pfn_to_page(pfn);
-	if (!memmap_valid_within(pfn, p, page_zone(p)))
-		return 1;
 
 	ent = kmalloc(sizeof(*ent), GFP_KERNEL);
 	if (!ent)
 		return -ENOMEM;
-	ent->addr = (unsigned long)page_to_virt(p);
+	ent->addr = (unsigned long)__va((pfn << PAGE_SHIFT));
 	ent->size = nr_pages << PAGE_SHIFT;
 
-	if (!virt_addr_valid(ent->addr))
+	/* Sanity check: Can happen in 32bit arch...maybe */
+	if (ent->addr < (unsigned long) __va(0))
 		goto free_out;
 
 	/* cut not-mapped area. ....from ppc-32 code. */
 	if (ULONG_MAX - ent->addr < ent->size)
 		ent->size = ULONG_MAX - ent->addr;
 
-	/*
-	 * We've already checked virt_addr_valid so we know this address
-	 * is a valid pointer, therefore we can check against it to determine
-	 * if we need to trim
-	 */
-	if (VMALLOC_START > ent->addr) {
+	/* cut when vmalloc() area is higher than direct-map area */
+	if (VMALLOC_START > (unsigned long)__va(0)) {
+		if (ent->addr > VMALLOC_START)
+			goto free_out;
 		if (VMALLOC_START - ent->addr < ent->size)
 			ent->size = VMALLOC_START - ent->addr;
 	}
@@ -384,10 +373,7 @@ static void elf_kcore_store_hdr(char *bufp, int nphdr, int dataoff)
 		phdr->p_flags	= PF_R|PF_W|PF_X;
 		phdr->p_offset	= kc_vaddr_to_offset(m->addr) + dataoff;
 		phdr->p_vaddr	= (size_t)m->addr;
-		if (m->type == KCORE_RAM || m->type == KCORE_TEXT)
-			phdr->p_paddr	= __pa(m->addr);
-		else
-			phdr->p_paddr	= (elf_addr_t)-1;
+		phdr->p_paddr	= 0;
 		phdr->p_filesz	= phdr->p_memsz	= m->size;
 		phdr->p_align	= PAGE_SIZE;
 	}
@@ -429,7 +415,7 @@ static void elf_kcore_store_hdr(char *bufp, int nphdr, int dataoff)
 	/* set up the task structure */
 	notes[2].name	= CORE_STR;
 	notes[2].type	= NT_TASKSTRUCT;
-	notes[2].datasz	= arch_task_struct_size;
+	notes[2].datasz	= sizeof(struct task_struct);
 	notes[2].data	= current;
 
 	nhdr->p_filesz	+= notesize(&notes[2]);
@@ -444,7 +430,6 @@ static void elf_kcore_store_hdr(char *bufp, int nphdr, int dataoff)
 static ssize_t
 read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 {
-	char *buf = file->private_data;
 	ssize_t acc = 0;
 	size_t size, tsz;
 	size_t elf_buflen;
@@ -514,26 +499,33 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 		if (&m->list == &kclist_head) {
 			if (clear_user(buffer, tsz))
 				return -EFAULT;
-		} else if (m->type == KCORE_VMALLOC) {
-			vread(buf, (char *)start, tsz);
+		} else if (is_vmalloc_or_module_addr((void *)start)) {
+			char * elf_buf;
+
+			elf_buf = kzalloc(tsz, GFP_KERNEL);
+			if (!elf_buf)
+				return -ENOMEM;
+			vread(elf_buf, (char *)start, tsz);
 			/* we have to zero-fill user buffer even if no read */
-			if (copy_to_user(buffer, buf, tsz))
+			if (copy_to_user(buffer, elf_buf, tsz)) {
+				kfree(elf_buf);
 				return -EFAULT;
-		} else if (m->type == KCORE_USER) {
-			/* User page is handled prior to normal kernel page: */
-			if (copy_to_user(buffer, (char *)start, tsz))
-				return -EFAULT;
+			}
+			kfree(elf_buf);
 		} else {
 			if (kern_addr_valid(start)) {
+				unsigned long n;
+
+				n = copy_to_user(buffer, (char *)start, tsz);
 				/*
-				 * Using bounce buffer to bypass the
-				 * hardened user copy kernel text checks.
+				 * We cannot distinguish between fault on source
+				 * and fault on destination. When this happens
+				 * we clear too and hope it will trigger the
+				 * EFAULT again.
 				 */
-				if (probe_kernel_read(buf, (void *) start, tsz)) {
-					if (clear_user(buffer, tsz))
-						return -EFAULT;
-				} else {
-					if (copy_to_user(buffer, buf, tsz))
+				if (n) { 
+					if (clear_user(buffer + tsz - n,
+								n))
 						return -EFAULT;
 				}
 			} else {
@@ -557,31 +549,20 @@ static int open_kcore(struct inode *inode, struct file *filp)
 {
 	if (!capable(CAP_SYS_RAWIO))
 		return -EPERM;
-
-	filp->private_data = kmalloc(PAGE_SIZE, GFP_KERNEL);
-	if (!filp->private_data)
-		return -ENOMEM;
-
 	if (kcore_need_update)
 		kcore_update_ram();
 	if (i_size_read(inode) != proc_root_kcore->size) {
-		inode_lock(inode);
+		mutex_lock(&inode->i_mutex);
 		i_size_write(inode, proc_root_kcore->size);
-		inode_unlock(inode);
+		mutex_unlock(&inode->i_mutex);
 	}
 	return 0;
 }
 
-static int release_kcore(struct inode *inode, struct file *file)
-{
-	kfree(file->private_data);
-	return 0;
-}
 
 static const struct file_operations proc_kcore_operations = {
 	.read		= read_kcore,
 	.open		= open_kcore,
-	.release	= release_kcore,
 	.llseek		= default_llseek,
 };
 

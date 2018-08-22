@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __MMU_H
 #define __MMU_H
 
@@ -6,14 +5,13 @@
 #include <linux/errno.h>
 
 typedef struct {
-	spinlock_t lock;
 	cpumask_t cpu_attach_mask;
-	atomic_t flush_count;
+	atomic_t attach_count;
 	unsigned int flush_mm;
+	spinlock_t list_lock;
 	struct list_head pgtable_list;
 	struct list_head gmap_list;
-	unsigned long gmap_asce;
-	unsigned long asce;
+	unsigned long asce_bits;
 	unsigned long asce_limit;
 	unsigned long vdso_base;
 	/* The mmu context allocates 4K page tables. */
@@ -21,14 +19,12 @@ typedef struct {
 	/* The mmu context uses extended page tables. */
 	unsigned int has_pgste:1;
 	/* The mmu context uses storage keys. */
-	unsigned int uses_skeys:1;
-	/* The mmu context uses CMM. */
-	unsigned int uses_cmm:1;
+	unsigned int use_skey:1;
 } mm_context_t;
 
-#define INIT_MM_CONTEXT(name)						   \
-	.context.lock =	__SPIN_LOCK_UNLOCKED(name.context.lock),	   \
-	.context.pgtable_list = LIST_HEAD_INIT(name.context.pgtable_list), \
+#define INIT_MM_CONTEXT(name)						      \
+	.context.list_lock    = __SPIN_LOCK_UNLOCKED(name.context.list_lock), \
+	.context.pgtable_list = LIST_HEAD_INIT(name.context.pgtable_list),    \
 	.context.gmap_list = LIST_HEAD_INIT(name.context.gmap_list),
 
 static inline int tprot(unsigned long addr)

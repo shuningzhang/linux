@@ -24,8 +24,7 @@
 #include <linux/tracepoint.h>
 #include <linux/err.h>
 #include <linux/slab.h>
-#include <linux/sched/signal.h>
-#include <linux/sched/task.h>
+#include <linux/sched.h>
 #include <linux/static_key.h>
 
 extern struct tracepoint * const __start___tracepoints_ptrs[];
@@ -92,13 +91,11 @@ static void debug_print_probes(struct tracepoint_func *funcs)
 		printk(KERN_DEBUG "Probe %d : %p\n", i, funcs[i].func);
 }
 
-static struct tracepoint_func *
-func_add(struct tracepoint_func **funcs, struct tracepoint_func *tp_func,
-	 int prio)
+static struct tracepoint_func *func_add(struct tracepoint_func **funcs,
+		struct tracepoint_func *tp_func)
 {
-	struct tracepoint_func *old, *new;
 	int nr_probes = 0;
-	int pos = -1;
+	struct tracepoint_func *old, *new;
 
 	if (WARN_ON(!tp_func->func))
 		return ERR_PTR(-EINVAL);
@@ -107,33 +104,18 @@ func_add(struct tracepoint_func **funcs, struct tracepoint_func *tp_func,
 	old = *funcs;
 	if (old) {
 		/* (N -> N+1), (N != 0, 1) probes */
-		for (nr_probes = 0; old[nr_probes].func; nr_probes++) {
-			/* Insert before probes of lower priority */
-			if (pos < 0 && old[nr_probes].prio < prio)
-				pos = nr_probes;
+		for (nr_probes = 0; old[nr_probes].func; nr_probes++)
 			if (old[nr_probes].func == tp_func->func &&
 			    old[nr_probes].data == tp_func->data)
 				return ERR_PTR(-EEXIST);
-		}
 	}
 	/* + 2 : one for new probe, one for NULL func */
 	new = allocate_probes(nr_probes + 2);
 	if (new == NULL)
 		return ERR_PTR(-ENOMEM);
-	if (old) {
-		if (pos < 0) {
-			pos = nr_probes;
-			memcpy(new, old, nr_probes * sizeof(struct tracepoint_func));
-		} else {
-			/* Copy higher priority probes ahead of the new probe */
-			memcpy(new, old, pos * sizeof(struct tracepoint_func));
-			/* Copy the rest after it. */
-			memcpy(new + pos + 1, old + pos,
-			       (nr_probes - pos) * sizeof(struct tracepoint_func));
-		}
-	} else
-		pos = 0;
-	new[pos] = *tp_func;
+	if (old)
+		memcpy(new, old, nr_probes * sizeof(struct tracepoint_func));
+	new[nr_probes] = *tp_func;
 	new[nr_probes + 1].func = NULL;
 	*funcs = new;
 	debug_print_probes(*funcs);
@@ -192,30 +174,27 @@ static void *func_remove(struct tracepoint_func **funcs,
  * Add the probe function to a tracepoint.
  */
 static int tracepoint_add_func(struct tracepoint *tp,
-			       struct tracepoint_func *func, int prio)
+		struct tracepoint_func *func)
 {
 	struct tracepoint_func *old, *tp_funcs;
-	int ret;
 
-	if (tp->regfunc && !static_key_enabled(&tp->key)) {
-		ret = tp->regfunc();
-		if (ret < 0)
-			return ret;
-	}
+	if (tp->regfunc && !static_key_enabled(&tp->key))
+		tp->regfunc();
 
 	tp_funcs = rcu_dereference_protected(tp->funcs,
 			lockdep_is_held(&tracepoints_mutex));
-	old = func_add(&tp_funcs, func, prio);
+	old = func_add(&tp_funcs, func);
 	if (IS_ERR(old)) {
-		WARN_ON_ONCE(PTR_ERR(old) != -ENOMEM);
+		WARN_ON_ONCE(1);
 		return PTR_ERR(old);
 	}
 
 	/*
-	 * rcu_assign_pointer has as smp_store_release() which makes sure
-	 * that the new probe callbacks array is consistent before setting
-	 * a pointer to it.  This array is referenced by __DO_TRACE from
-	 * include/linux/tracepoint.h using rcu_dereference_sched().
+	 * rcu_assign_pointer has a smp_wmb() which makes sure that the new
+	 * probe callbacks array is consistent before setting a pointer to it.
+	 * This array is referenced by __DO_TRACE from
+	 * include/linux/tracepoints.h. A matching smp_read_barrier_depends()
+	 * is used.
 	 */
 	rcu_assign_pointer(tp->funcs, tp_funcs);
 	if (!static_key_enabled(&tp->key))
@@ -239,7 +218,7 @@ static int tracepoint_remove_func(struct tracepoint *tp,
 			lockdep_is_held(&tracepoints_mutex));
 	old = func_remove(&tp_funcs, func);
 	if (IS_ERR(old)) {
-		WARN_ON_ONCE(PTR_ERR(old) != -ENOMEM);
+		WARN_ON_ONCE(1);
 		return PTR_ERR(old);
 	}
 
@@ -257,35 +236,6 @@ static int tracepoint_remove_func(struct tracepoint *tp,
 }
 
 /**
- * tracepoint_probe_register_prio -  Connect a probe to a tracepoint with priority
- * @tp: tracepoint
- * @probe: probe handler
- * @data: tracepoint data
- * @prio: priority of this function over other registered functions
- *
- * Returns 0 if ok, error value on error.
- * Note: if @tp is within a module, the caller is responsible for
- * unregistering the probe before the module is gone. This can be
- * performed either with a tracepoint module going notifier, or from
- * within module exit functions.
- */
-int tracepoint_probe_register_prio(struct tracepoint *tp, void *probe,
-				   void *data, int prio)
-{
-	struct tracepoint_func tp_func;
-	int ret;
-
-	mutex_lock(&tracepoints_mutex);
-	tp_func.func = probe;
-	tp_func.data = data;
-	tp_func.prio = prio;
-	ret = tracepoint_add_func(tp, &tp_func, prio);
-	mutex_unlock(&tracepoints_mutex);
-	return ret;
-}
-EXPORT_SYMBOL_GPL(tracepoint_probe_register_prio);
-
-/**
  * tracepoint_probe_register -  Connect a probe to a tracepoint
  * @tp: tracepoint
  * @probe: probe handler
@@ -299,7 +249,15 @@ EXPORT_SYMBOL_GPL(tracepoint_probe_register_prio);
  */
 int tracepoint_probe_register(struct tracepoint *tp, void *probe, void *data)
 {
-	return tracepoint_probe_register_prio(tp, probe, data, TRACEPOINT_DEFAULT_PRIO);
+	struct tracepoint_func tp_func;
+	int ret;
+
+	mutex_lock(&tracepoints_mutex);
+	tp_func.func = probe;
+	tp_func.data = data;
+	ret = tracepoint_add_func(tp, &tp_func);
+	mutex_unlock(&tracepoints_mutex);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(tracepoint_probe_register);
 
@@ -494,7 +452,7 @@ static __init int init_tracepoints(void)
 
 	ret = register_module_notifier(&tracepoint_module_nb);
 	if (ret)
-		pr_warn("Failed to register tracepoint module enter notifier\n");
+		pr_warning("Failed to register tracepoint module enter notifier\n");
 
 	return ret;
 }
@@ -532,7 +490,7 @@ EXPORT_SYMBOL_GPL(for_each_kernel_tracepoint);
 /* NB: reg/unreg are called while guarded with the tracepoints_mutex */
 static int sys_tracepoint_refcount;
 
-int syscall_regfunc(void)
+void syscall_regfunc(void)
 {
 	struct task_struct *p, *t;
 
@@ -544,8 +502,6 @@ int syscall_regfunc(void)
 		read_unlock(&tasklist_lock);
 	}
 	sys_tracepoint_refcount++;
-
-	return 0;
 }
 
 void syscall_unregfunc(void)

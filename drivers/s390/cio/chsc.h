@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef S390_CHSC_H
 #define S390_CHSC_H
 
@@ -39,11 +38,6 @@ struct channel_path_desc_fmt1 {
 	u8 f:1;
 	u32 zeros[2];
 } __attribute__ ((packed));
-
-struct channel_path_desc_fmt3 {
-	struct channel_path_desc_fmt1 fmt1_desc;
-	u8 util_str[64];
-};
 
 struct channel_path;
 
@@ -118,24 +112,9 @@ struct chsc_scpd {
 	u32 last_chpid:8;
 	u32 zeroes1;
 	struct chsc_header response;
-	u32:32;
-	u8 data[0];
-} __packed;
+	u8 data[PAGE_SIZE - 20];
+} __attribute__ ((packed));
 
-struct chsc_sda_area {
-	struct chsc_header request;
-	u8 :4;
-	u8 format:4;
-	u8 :8;
-	u16 operation_code;
-	u32 :32;
-	u32 :32;
-	u32 operation_data_area[252];
-	struct chsc_header response;
-	u32 :4;
-	u32 format2:4;
-	u32 :24;
-} __packed __aligned(PAGE_SIZE);
 
 extern int chsc_get_ssd_info(struct subchannel_id schid,
 			     struct chsc_ssd_info *ssd);
@@ -143,7 +122,6 @@ extern int chsc_determine_css_characteristics(void);
 extern int chsc_init(void);
 extern void chsc_init_cleanup(void);
 
-int __chsc_enable_facility(struct chsc_sda_area *sda_area, int operation_code);
 extern int chsc_enable_facility(int);
 struct channel_subsystem;
 extern int chsc_secm(struct channel_subsystem *, int);
@@ -152,12 +130,10 @@ int __chsc_do_secm(struct channel_subsystem *css, int enable);
 int chsc_chp_vary(struct chp_id chpid, int on);
 int chsc_determine_channel_path_desc(struct chp_id chpid, int fmt, int rfmt,
 				     int c, int m, void *page);
-int chsc_determine_fmt0_channel_path_desc(struct chp_id chpid,
-					  struct channel_path_desc_fmt0 *desc);
+int chsc_determine_base_channel_path_desc(struct chp_id chpid,
+					  struct channel_path_desc *desc);
 int chsc_determine_fmt1_channel_path_desc(struct chp_id chpid,
 					  struct channel_path_desc_fmt1 *desc);
-int chsc_determine_fmt3_channel_path_desc(struct chp_id chpid,
-					  struct channel_path_desc_fmt3 *desc);
 void chsc_chp_online(struct chp_id chpid);
 void chsc_chp_offline(struct chp_id chpid);
 int chsc_get_channel_measurement_chars(struct channel_path *chp);
@@ -249,8 +225,6 @@ int chsc_pnso_brinfo(struct subchannel_id schid,
 		struct chsc_pnso_area *brinfo_area,
 		struct chsc_brinfo_resume_token resume_token,
 		int cnc);
-
-int __init chsc_get_cssid(int idx);
 
 #ifdef CONFIG_SCM_BUS
 int scm_update_information(void);

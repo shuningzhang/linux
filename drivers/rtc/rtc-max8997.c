@@ -153,7 +153,7 @@ static int max8997_rtc_read_time(struct device *dev, struct rtc_time *tm)
 
 	max8997_rtc_data_to_tm(data, tm, info->rtc_24hr_mode);
 
-	return 0;
+	return rtc_valid_tm(tm);
 }
 
 static int max8997_rtc_set_time(struct device *dev, struct rtc_time *tm)
@@ -521,7 +521,6 @@ static const struct platform_device_id rtc_id[] = {
 	{ "max8997-rtc", 0 },
 	{},
 };
-MODULE_DEVICE_TABLE(platform, rtc_id);
 
 static struct platform_driver max8997_rtc_driver = {
 	.driver		= {

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0
 r8188eu-y :=				\
 		core/rtw_ap.o		\
 		core/rtw_cmd.o		\
@@ -43,7 +42,6 @@ r8188eu-y :=				\
 		hal/usb_halinit.o	\
 		os_dep/ioctl_linux.o	\
 		os_dep/mlme_linux.o	\
-		os_dep/mon.o		\
 		os_dep/os_intfs.o	\
 		os_dep/osdep_service.o	\
 		os_dep/recv_linux.o	\
@@ -54,4 +52,4 @@ r8188eu-y :=				\
 
 obj-$(CONFIG_R8188EU)	:= r8188eu.o
 
-ccflags-y += -I$(srctree)/$(src)/include
+ccflags-y += -D__CHECK_ENDIAN__ -I$(src)/include

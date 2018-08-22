@@ -32,7 +32,6 @@
 #include <asm/bootinfo.h>
 #include <asm/reboot.h>
 #include <asm/mach-au1x00/au1000.h>
-#include <asm/mach-au1x00/gpio-au1000.h>
 #include <asm/mach-au1x00/au1xxx_eth.h>
 #include <prom.h>
 
@@ -145,7 +144,7 @@ static struct platform_device mtx1_wdt = {
 	.resource = mtx1_wdt_res,
 };
 
-static const struct gpio_led default_leds[] = {
+static struct gpio_led default_leds[] = {
 	{
 		.name	= "mtx1:green",
 		.gpio = 211,

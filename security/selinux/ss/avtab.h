@@ -5,7 +5,7 @@
  * table is used to represent the type enforcement
  * tables.
  *
- *  Author : Stephen Smalley, <sds@tycho.nsa.gov>
+ *  Author : Stephen Smalley, <sds@epoch.ncsc.mil>
  */
 
 /* Updated: Frank Mayer <mayerf@tresys.com> and Karl MacMillan <kmacmillan@tresys.com>
@@ -23,7 +23,6 @@
 #ifndef _SS_AVTAB_H_
 #define _SS_AVTAB_H_
 
-#include "security.h"
 #include <linux/flex_array.h>
 
 struct avtab_key {
@@ -38,43 +37,13 @@ struct avtab_key {
 #define AVTAB_MEMBER		0x0020
 #define AVTAB_CHANGE		0x0040
 #define AVTAB_TYPE		(AVTAB_TRANSITION | AVTAB_MEMBER | AVTAB_CHANGE)
-/* extended permissions */
-#define AVTAB_XPERMS_ALLOWED	0x0100
-#define AVTAB_XPERMS_AUDITALLOW	0x0200
-#define AVTAB_XPERMS_DONTAUDIT	0x0400
-#define AVTAB_XPERMS		(AVTAB_XPERMS_ALLOWED | \
-				AVTAB_XPERMS_AUDITALLOW | \
-				AVTAB_XPERMS_DONTAUDIT)
 #define AVTAB_ENABLED_OLD   0x80000000 /* reserved for used in cond_avtab */
 #define AVTAB_ENABLED		0x8000 /* reserved for used in cond_avtab */
 	u16 specified;	/* what field is specified */
 };
 
-/*
- * For operations that require more than the 32 permissions provided by the avc
- * extended permissions may be used to provide 256 bits of permissions.
- */
-struct avtab_extended_perms {
-/* These are not flags. All 256 values may be used */
-#define AVTAB_XPERMS_IOCTLFUNCTION	0x01
-#define AVTAB_XPERMS_IOCTLDRIVER	0x02
-	/* extension of the avtab_key specified */
-	u8 specified; /* ioctl, netfilter, ... */
-	/*
-	 * if 256 bits is not adequate as is often the case with ioctls, then
-	 * multiple extended perms may be used and the driver field
-	 * specifies which permissions are included.
-	 */
-	u8 driver;
-	/* 256 bits of permissions */
-	struct extended_perms_data perms;
-};
-
 struct avtab_datum {
-	union {
-		u32 data; /* access vector or type value */
-		struct avtab_extended_perms *xperms;
-	} u;
+	u32 data; /* access vector or type value */
 };
 
 struct avtab_node {
@@ -113,6 +82,9 @@ struct avtab_node *avtab_insert_nonunique(struct avtab *h, struct avtab_key *key
 struct avtab_node *avtab_search_node(struct avtab *h, struct avtab_key *key);
 
 struct avtab_node *avtab_search_node_next(struct avtab_node *node, int specified);
+
+void avtab_cache_init(void);
+void avtab_cache_destroy(void);
 
 #define MAX_AVTAB_HASH_BITS 16
 #define MAX_AVTAB_HASH_BUCKETS (1 << MAX_AVTAB_HASH_BITS)

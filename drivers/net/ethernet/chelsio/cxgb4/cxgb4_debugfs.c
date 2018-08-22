@@ -45,10 +45,6 @@
 #include "cxgb4_debugfs.h"
 #include "clip_tbl.h"
 #include "l2t.h"
-#include "cudbg_if.h"
-#include "cudbg_lib_common.h"
-#include "cudbg_entity.h"
-#include "cudbg_lib.h"
 
 /* generic seq_file support for showing a table of size rows x width. */
 static void *seq_tab_get_idx(struct seq_tab *tb, loff_t pos)
@@ -155,45 +151,6 @@ static int cim_la_show_3in1(struct seq_file *seq, void *v, int idx)
 	return 0;
 }
 
-static int cim_la_show_t6(struct seq_file *seq, void *v, int idx)
-{
-	if (v == SEQ_START_TOKEN) {
-		seq_puts(seq, "Status   Inst    Data      PC     LS0Stat  "
-			 "LS0Addr  LS0Data  LS1Stat  LS1Addr  LS1Data\n");
-	} else {
-		const u32 *p = v;
-
-		seq_printf(seq, "  %02x   %04x%04x %04x%04x %04x%04x %08x %08x %08x %08x %08x %08x\n",
-			   (p[9] >> 16) & 0xff,       /* Status */
-			   p[9] & 0xffff, p[8] >> 16, /* Inst */
-			   p[8] & 0xffff, p[7] >> 16, /* Data */
-			   p[7] & 0xffff, p[6] >> 16, /* PC */
-			   p[2], p[1], p[0],      /* LS0 Stat, Addr and Data */
-			   p[5], p[4], p[3]);     /* LS1 Stat, Addr and Data */
-	}
-	return 0;
-}
-
-static int cim_la_show_pc_t6(struct seq_file *seq, void *v, int idx)
-{
-	if (v == SEQ_START_TOKEN) {
-		seq_puts(seq, "Status   Inst    Data      PC\n");
-	} else {
-		const u32 *p = v;
-
-		seq_printf(seq, "  %02x   %08x %08x %08x\n",
-			   p[3] & 0xff, p[2], p[1], p[0]);
-		seq_printf(seq, "  %02x   %02x%06x %02x%06x %02x%06x\n",
-			   (p[6] >> 8) & 0xff, p[6] & 0xff, p[5] >> 8,
-			   p[5] & 0xff, p[4] >> 8, p[4] & 0xff, p[3] >> 8);
-		seq_printf(seq, "  %02x   %04x%04x %04x%04x %04x%04x\n",
-			   (p[9] >> 16) & 0xff, p[9] & 0xffff, p[8] >> 16,
-			   p[8] & 0xffff, p[7] >> 16, p[7] & 0xffff,
-			   p[6] >> 16);
-	}
-	return 0;
-}
-
 static int cim_la_open(struct inode *inode, struct file *file)
 {
 	int ret;
@@ -205,18 +162,9 @@ static int cim_la_open(struct inode *inode, struct file *file)
 	if (ret)
 		return ret;
 
-	if (is_t6(adap->params.chip)) {
-		/* +1 to account for integer division of CIMLA_SIZE/10 */
-		p = seq_open_tab(file, (adap->params.cim_la_size / 10) + 1,
-				 10 * sizeof(u32), 1,
-				 cfg & UPDBGLACAPTPCONLY_F ?
-					cim_la_show_pc_t6 : cim_la_show_t6);
-	} else {
-		p = seq_open_tab(file, adap->params.cim_la_size / 8,
-				 8 * sizeof(u32), 1,
-				 cfg & UPDBGLACAPTPCONLY_F ? cim_la_show_3in1 :
-							     cim_la_show);
-	}
+	p = seq_open_tab(file, adap->params.cim_la_size / 8, 8 * sizeof(u32), 1,
+			 cfg & UPDBGLACAPTPCONLY_F ?
+			 cim_la_show_3in1 : cim_la_show);
 	if (!p)
 		return -ENOMEM;
 
@@ -229,95 +177,6 @@ static int cim_la_open(struct inode *inode, struct file *file)
 static const struct file_operations cim_la_fops = {
 	.owner   = THIS_MODULE,
 	.open    = cim_la_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = seq_release_private
-};
-
-static int cim_pif_la_show(struct seq_file *seq, void *v, int idx)
-{
-	const u32 *p = v;
-
-	if (v == SEQ_START_TOKEN) {
-		seq_puts(seq, "Cntl ID DataBE   Addr                 Data\n");
-	} else if (idx < CIM_PIFLA_SIZE) {
-		seq_printf(seq, " %02x  %02x  %04x  %08x %08x%08x%08x%08x\n",
-			   (p[5] >> 22) & 0xff, (p[5] >> 16) & 0x3f,
-			   p[5] & 0xffff, p[4], p[3], p[2], p[1], p[0]);
-	} else {
-		if (idx == CIM_PIFLA_SIZE)
-			seq_puts(seq, "\nCntl ID               Data\n");
-		seq_printf(seq, " %02x  %02x %08x%08x%08x%08x\n",
-			   (p[4] >> 6) & 0xff, p[4] & 0x3f,
-			   p[3], p[2], p[1], p[0]);
-	}
-	return 0;
-}
-
-static int cim_pif_la_open(struct inode *inode, struct file *file)
-{
-	struct seq_tab *p;
-	struct adapter *adap = inode->i_private;
-
-	p = seq_open_tab(file, 2 * CIM_PIFLA_SIZE, 6 * sizeof(u32), 1,
-			 cim_pif_la_show);
-	if (!p)
-		return -ENOMEM;
-
-	t4_cim_read_pif_la(adap, (u32 *)p->data,
-			   (u32 *)p->data + 6 * CIM_PIFLA_SIZE, NULL, NULL);
-	return 0;
-}
-
-static const struct file_operations cim_pif_la_fops = {
-	.owner   = THIS_MODULE,
-	.open    = cim_pif_la_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = seq_release_private
-};
-
-static int cim_ma_la_show(struct seq_file *seq, void *v, int idx)
-{
-	const u32 *p = v;
-
-	if (v == SEQ_START_TOKEN) {
-		seq_puts(seq, "\n");
-	} else if (idx < CIM_MALA_SIZE) {
-		seq_printf(seq, "%02x%08x%08x%08x%08x\n",
-			   p[4], p[3], p[2], p[1], p[0]);
-	} else {
-		if (idx == CIM_MALA_SIZE)
-			seq_puts(seq,
-				 "\nCnt ID Tag UE       Data       RDY VLD\n");
-		seq_printf(seq, "%3u %2u  %x   %u %08x%08x  %u   %u\n",
-			   (p[2] >> 10) & 0xff, (p[2] >> 7) & 7,
-			   (p[2] >> 3) & 0xf, (p[2] >> 2) & 1,
-			   (p[1] >> 2) | ((p[2] & 3) << 30),
-			   (p[0] >> 2) | ((p[1] & 3) << 30), (p[0] >> 1) & 1,
-			   p[0] & 1);
-	}
-	return 0;
-}
-
-static int cim_ma_la_open(struct inode *inode, struct file *file)
-{
-	struct seq_tab *p;
-	struct adapter *adap = inode->i_private;
-
-	p = seq_open_tab(file, 2 * CIM_MALA_SIZE, 5 * sizeof(u32), 1,
-			 cim_ma_la_show);
-	if (!p)
-		return -ENOMEM;
-
-	t4_cim_read_ma_la(adap, (u32 *)p->data,
-			  (u32 *)p->data + 5 * CIM_MALA_SIZE);
-	return 0;
-}
-
-static const struct file_operations cim_ma_la_fops = {
-	.owner   = THIS_MODULE,
-	.open    = cim_ma_la_open,
 	.read    = seq_read,
 	.llseek  = seq_lseek,
 	.release = seq_release_private
@@ -350,11 +209,11 @@ static int cim_qcfg_show(struct seq_file *seq, void *v)
 		if (is_t4(adap->params.chip)) {
 			i = t4_cim_read(adap, UP_OBQ_0_REALADDR_A,
 					ARRAY_SIZE(obq_wr_t4), obq_wr_t4);
-			wr = obq_wr_t4;
+				wr = obq_wr_t4;
 		} else {
 			i = t4_cim_read(adap, UP_OBQ_0_SHADOW_REALADDR_A,
 					ARRAY_SIZE(obq_wr_t5), obq_wr_t5);
-			wr = obq_wr_t5;
+				wr = obq_wr_t5;
 		}
 	}
 	if (i)
@@ -761,8 +620,8 @@ static int pm_stats_show(struct seq_file *seq, void *v)
 	};
 
 	int i;
-	u32 tx_cnt[T6_PM_NSTATS], rx_cnt[T6_PM_NSTATS];
-	u64 tx_cyc[T6_PM_NSTATS], rx_cyc[T6_PM_NSTATS];
+	u32 tx_cnt[PM_NSTATS], rx_cnt[PM_NSTATS];
+	u64 tx_cyc[PM_NSTATS], rx_cyc[PM_NSTATS];
 	struct adapter *adap = seq->private;
 
 	t4_pmtx_get_stats(adap, tx_cnt, tx_cyc);
@@ -777,32 +636,6 @@ static int pm_stats_show(struct seq_file *seq, void *v)
 	for (i = 0; i < PM_NSTATS - 1; i++)
 		seq_printf(seq, "%-13s %10u  %20llu\n",
 			   rx_pm_stats[i], rx_cnt[i], rx_cyc[i]);
-
-	if (CHELSIO_CHIP_VERSION(adap->params.chip) > CHELSIO_T5) {
-		/* In T5 the granularity of the total wait is too fine.
-		 * It is not useful as it reaches the max value too fast.
-		 * Hence display this Input FIFO wait for T6 onwards.
-		 */
-		seq_printf(seq, "%13s %10s  %20s\n",
-			   " ", "Total wait", "Total Occupancy");
-		seq_printf(seq, "Tx FIFO wait  %10u  %20llu\n",
-			   tx_cnt[i], tx_cyc[i]);
-		seq_printf(seq, "Rx FIFO wait  %10u  %20llu\n",
-			   rx_cnt[i], rx_cyc[i]);
-
-		/* Skip index 6 as there is nothing useful ihere */
-		i += 2;
-
-		/* At index 7, a new stat for read latency (count, total wait)
-		 * is added.
-		 */
-		seq_printf(seq, "%13s %10s  %20s\n",
-			   " ", "Reads", "Total wait");
-		seq_printf(seq, "Tx latency    %10u  %20llu\n",
-			   tx_cnt[i], tx_cyc[i]);
-		seq_printf(seq, "Rx latency    %10u  %20llu\n",
-			   rx_cnt[i], rx_cyc[i]);
-	}
 	return 0;
 }
 
@@ -830,39 +663,6 @@ static const struct file_operations pm_stats_debugfs_fops = {
 	.write   = pm_stats_clear
 };
 
-static int tx_rate_show(struct seq_file *seq, void *v)
-{
-	u64 nrate[NCHAN], orate[NCHAN];
-	struct adapter *adap = seq->private;
-
-	t4_get_chan_txrate(adap, nrate, orate);
-	if (adap->params.arch.nchan == NCHAN) {
-		seq_puts(seq, "              channel 0   channel 1   "
-			 "channel 2   channel 3\n");
-		seq_printf(seq, "NIC B/s:     %10llu  %10llu  %10llu  %10llu\n",
-			   (unsigned long long)nrate[0],
-			   (unsigned long long)nrate[1],
-			   (unsigned long long)nrate[2],
-			   (unsigned long long)nrate[3]);
-		seq_printf(seq, "Offload B/s: %10llu  %10llu  %10llu  %10llu\n",
-			   (unsigned long long)orate[0],
-			   (unsigned long long)orate[1],
-			   (unsigned long long)orate[2],
-			   (unsigned long long)orate[3]);
-	} else {
-		seq_puts(seq, "              channel 0   channel 1\n");
-		seq_printf(seq, "NIC B/s:     %10llu  %10llu\n",
-			   (unsigned long long)nrate[0],
-			   (unsigned long long)nrate[1]);
-		seq_printf(seq, "Offload B/s: %10llu  %10llu\n",
-			   (unsigned long long)orate[0],
-			   (unsigned long long)orate[1]);
-	}
-	return 0;
-}
-
-DEFINE_SIMPLE_DEBUGFS_FILE(tx_rate);
-
 static int cctrl_tbl_show(struct seq_file *seq, void *v)
 {
 	static const char * const dec_fac[] = {
@@ -873,7 +673,7 @@ static int cctrl_tbl_show(struct seq_file *seq, void *v)
 	u16 (*incr)[NCCTRL_WIN];
 	struct adapter *adap = seq->private;
 
-	incr = kmalloc_array(NMTUS, sizeof(*incr), GFP_KERNEL);
+	incr = kmalloc(sizeof(*incr) * NMTUS, GFP_KERNEL);
 	if (!incr)
 		return -ENOMEM;
 
@@ -970,7 +770,6 @@ static const char * const devlog_level_strings[] = {
 
 static const char * const devlog_facility_strings[] = {
 	[FW_DEVLOG_FACILITY_CORE]	= "CORE",
-	[FW_DEVLOG_FACILITY_CF]         = "CF",
 	[FW_DEVLOG_FACILITY_SCHED]	= "SCHED",
 	[FW_DEVLOG_FACILITY_TIMER]	= "TIMER",
 	[FW_DEVLOG_FACILITY_RES]	= "RES",
@@ -1031,23 +830,16 @@ static int devlog_show(struct seq_file *seq, void *v)
 		 * eventually have to put a format interpreter in here ...
 		 */
 		seq_printf(seq, "%10d  %15llu  %8s  %8s  ",
-			   be32_to_cpu(e->seqno),
-			   be64_to_cpu(e->timestamp),
+			   e->seqno, e->timestamp,
 			   (e->level < ARRAY_SIZE(devlog_level_strings)
 			    ? devlog_level_strings[e->level]
 			    : "UNKNOWN"),
 			   (e->facility < ARRAY_SIZE(devlog_facility_strings)
 			    ? devlog_facility_strings[e->facility]
 			    : "UNKNOWN"));
-		seq_printf(seq, e->fmt,
-			   be32_to_cpu(e->params[0]),
-			   be32_to_cpu(e->params[1]),
-			   be32_to_cpu(e->params[2]),
-			   be32_to_cpu(e->params[3]),
-			   be32_to_cpu(e->params[4]),
-			   be32_to_cpu(e->params[5]),
-			   be32_to_cpu(e->params[6]),
-			   be32_to_cpu(e->params[7]));
+		seq_printf(seq, e->fmt, e->params[0], e->params[1],
+			   e->params[2], e->params[3], e->params[4],
+			   e->params[5], e->params[6], e->params[7]);
 	}
 	return 0;
 }
@@ -1129,17 +921,23 @@ static int devlog_open(struct inode *inode, struct file *file)
 		return ret;
 	}
 
-	/* Find the earliest (lowest Sequence Number) log entry in the
-	 * circular Device Log.
+	/* Translate log multi-byte integral elements into host native format
+	 * and determine where the first entry in the log is.
 	 */
 	for (fseqno = ~((u32)0), index = 0; index < dinfo->nentries; index++) {
 		struct fw_devlog_e *e = &dinfo->log[index];
+		int i;
 		__u32 seqno;
 
 		if (e->timestamp == 0)
 			continue;
 
+		e->timestamp = (__force __be64)be64_to_cpu(e->timestamp);
 		seqno = be32_to_cpu(e->seqno);
+		for (i = 0; i < 8; i++)
+			e->params[i] =
+				(__force __be32)be32_to_cpu(e->params[i]);
+
 		if (seqno < fseqno) {
 			fseqno = seqno;
 			dinfo->first = index;
@@ -1156,127 +954,21 @@ static const struct file_operations devlog_fops = {
 	.release = seq_release_private
 };
 
-/* Show Firmware Mailbox Command/Reply Log
- *
- * Note that we don't do any locking when dumping the Firmware Mailbox Log so
- * it's possible that we can catch things during a log update and therefore
- * see partially corrupted log entries.  But it's probably Good Enough(tm).
- * If we ever decide that we want to make sure that we're dumping a coherent
- * log, we'd need to perform locking in the mailbox logging and in
- * mboxlog_open() where we'd need to grab the entire mailbox log in one go
- * like we do for the Firmware Device Log.
- */
-static int mboxlog_show(struct seq_file *seq, void *v)
-{
-	struct adapter *adapter = seq->private;
-	struct mbox_cmd_log *log = adapter->mbox_log;
-	struct mbox_cmd *entry;
-	int entry_idx, i;
-
-	if (v == SEQ_START_TOKEN) {
-		seq_printf(seq,
-			   "%10s  %15s  %5s  %5s  %s\n",
-			   "Seq#", "Tstamp", "Atime", "Etime",
-			   "Command/Reply");
-		return 0;
-	}
-
-	entry_idx = log->cursor + ((uintptr_t)v - 2);
-	if (entry_idx >= log->size)
-		entry_idx -= log->size;
-	entry = mbox_cmd_log_entry(log, entry_idx);
-
-	/* skip over unused entries */
-	if (entry->timestamp == 0)
-		return 0;
-
-	seq_printf(seq, "%10u  %15llu  %5d  %5d",
-		   entry->seqno, entry->timestamp,
-		   entry->access, entry->execute);
-	for (i = 0; i < MBOX_LEN / 8; i++) {
-		u64 flit = entry->cmd[i];
-		u32 hi = (u32)(flit >> 32);
-		u32 lo = (u32)flit;
-
-		seq_printf(seq, "  %08x %08x", hi, lo);
-	}
-	seq_puts(seq, "\n");
-	return 0;
-}
-
-static inline void *mboxlog_get_idx(struct seq_file *seq, loff_t pos)
-{
-	struct adapter *adapter = seq->private;
-	struct mbox_cmd_log *log = adapter->mbox_log;
-
-	return ((pos <= log->size) ? (void *)(uintptr_t)(pos + 1) : NULL);
-}
-
-static void *mboxlog_start(struct seq_file *seq, loff_t *pos)
-{
-	return *pos ? mboxlog_get_idx(seq, *pos) : SEQ_START_TOKEN;
-}
-
-static void *mboxlog_next(struct seq_file *seq, void *v, loff_t *pos)
-{
-	++*pos;
-	return mboxlog_get_idx(seq, *pos);
-}
-
-static void mboxlog_stop(struct seq_file *seq, void *v)
-{
-}
-
-static const struct seq_operations mboxlog_seq_ops = {
-	.start = mboxlog_start,
-	.next  = mboxlog_next,
-	.stop  = mboxlog_stop,
-	.show  = mboxlog_show
-};
-
-static int mboxlog_open(struct inode *inode, struct file *file)
-{
-	int res = seq_open(file, &mboxlog_seq_ops);
-
-	if (!res) {
-		struct seq_file *seq = file->private_data;
-
-		seq->private = inode->i_private;
-	}
-	return res;
-}
-
-static const struct file_operations mboxlog_fops = {
-	.owner   = THIS_MODULE,
-	.open    = mboxlog_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = seq_release,
-};
-
 static int mbox_show(struct seq_file *seq, void *v)
 {
 	static const char * const owner[] = { "none", "FW", "driver",
-					      "unknown", "<unread>" };
+					      "unknown" };
 
 	int i;
 	unsigned int mbox = (uintptr_t)seq->private & 7;
 	struct adapter *adap = seq->private - mbox;
 	void __iomem *addr = adap->regs + PF_REG(mbox, CIM_PF_MAILBOX_DATA_A);
+	unsigned int ctrl_reg = (is_t4(adap->params.chip)
+				 ? CIM_PF_MAILBOX_CTRL_A
+				 : CIM_PF_MAILBOX_CTRL_SHADOW_COPY_A);
+	void __iomem *ctrl = adap->regs + PF_REG(mbox, ctrl_reg);
 
-	/* For T4 we don't have a shadow copy of the Mailbox Control register.
-	 * And since reading that real register causes a side effect of
-	 * granting ownership, we're best of simply not reading it at all.
-	 */
-	if (is_t4(adap->params.chip)) {
-		i = 4; /* index of "<unread>" */
-	} else {
-		unsigned int ctrl_reg = CIM_PF_MAILBOX_CTRL_SHADOW_COPY_A;
-		void __iomem *ctrl = adap->regs + PF_REG(mbox, ctrl_reg);
-
-		i = MBOWNER_G(readl(ctrl));
-	}
-
+	i = MBOWNER_G(readl(ctrl));
 	seq_printf(seq, "mailbox owned by %s\n\n", owner[i]);
 
 	for (i = 0; i < MBOX_LEN; i += 8)
@@ -1338,299 +1030,6 @@ static const struct file_operations mbox_debugfs_fops = {
 	.write   = mbox_write
 };
 
-static int mps_trc_show(struct seq_file *seq, void *v)
-{
-	int enabled, i;
-	struct trace_params tp;
-	unsigned int trcidx = (uintptr_t)seq->private & 3;
-	struct adapter *adap = seq->private - trcidx;
-
-	t4_get_trace_filter(adap, &tp, trcidx, &enabled);
-	if (!enabled) {
-		seq_puts(seq, "tracer is disabled\n");
-		return 0;
-	}
-
-	if (tp.skip_ofst * 8 >= TRACE_LEN) {
-		dev_err(adap->pdev_dev, "illegal trace pattern skip offset\n");
-		return -EINVAL;
-	}
-	if (tp.port < 8) {
-		i = adap->chan_map[tp.port & 3];
-		if (i >= MAX_NPORTS) {
-			dev_err(adap->pdev_dev, "tracer %u is assigned "
-				"to non-existing port\n", trcidx);
-			return -EINVAL;
-		}
-		seq_printf(seq, "tracer is capturing %s %s, ",
-			   adap->port[i]->name, tp.port < 4 ? "Rx" : "Tx");
-	} else
-		seq_printf(seq, "tracer is capturing loopback %d, ",
-			   tp.port - 8);
-	seq_printf(seq, "snap length: %u, min length: %u\n", tp.snap_len,
-		   tp.min_len);
-	seq_printf(seq, "packets captured %smatch filter\n",
-		   tp.invert ? "do not " : "");
-
-	if (tp.skip_ofst) {
-		seq_puts(seq, "filter pattern: ");
-		for (i = 0; i < tp.skip_ofst * 2; i += 2)
-			seq_printf(seq, "%08x%08x", tp.data[i], tp.data[i + 1]);
-		seq_putc(seq, '/');
-		for (i = 0; i < tp.skip_ofst * 2; i += 2)
-			seq_printf(seq, "%08x%08x", tp.mask[i], tp.mask[i + 1]);
-		seq_puts(seq, "@0\n");
-	}
-
-	seq_puts(seq, "filter pattern: ");
-	for (i = tp.skip_ofst * 2; i < TRACE_LEN / 4; i += 2)
-		seq_printf(seq, "%08x%08x", tp.data[i], tp.data[i + 1]);
-	seq_putc(seq, '/');
-	for (i = tp.skip_ofst * 2; i < TRACE_LEN / 4; i += 2)
-		seq_printf(seq, "%08x%08x", tp.mask[i], tp.mask[i + 1]);
-	seq_printf(seq, "@%u\n", (tp.skip_ofst + tp.skip_len) * 8);
-	return 0;
-}
-
-static int mps_trc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, mps_trc_show, inode->i_private);
-}
-
-static unsigned int xdigit2int(unsigned char c)
-{
-	return isdigit(c) ? c - '0' : tolower(c) - 'a' + 10;
-}
-
-#define TRC_PORT_NONE 0xff
-#define TRC_RSS_ENABLE 0x33
-#define TRC_RSS_DISABLE 0x13
-
-/* Set an MPS trace filter.  Syntax is:
- *
- * disable
- *
- * to disable tracing, or
- *
- * interface qid=<qid no> [snaplen=<val>] [minlen=<val>] [not] [<pattern>]...
- *
- * where interface is one of rxN, txN, or loopbackN, N = 0..3, qid can be one
- * of the NIC's response qid obtained from sge_qinfo and pattern has the form
- *
- * <pattern data>[/<pattern mask>][@<anchor>]
- *
- * Up to 2 filter patterns can be specified.  If 2 are supplied the first one
- * must be anchored at 0.  An omitted mask is taken as a mask of 1s, an omitted
- * anchor is taken as 0.
- */
-static ssize_t mps_trc_write(struct file *file, const char __user *buf,
-			     size_t count, loff_t *pos)
-{
-	int i, enable, ret;
-	u32 *data, *mask;
-	struct trace_params tp;
-	const struct inode *ino;
-	unsigned int trcidx;
-	char *s, *p, *word, *end;
-	struct adapter *adap;
-	u32 j;
-
-	ino = file_inode(file);
-	trcidx = (uintptr_t)ino->i_private & 3;
-	adap = ino->i_private - trcidx;
-
-	/* Don't accept input more than 1K, can't be anything valid except lots
-	 * of whitespace.  Well, use less.
-	 */
-	if (count > 1024)
-		return -EFBIG;
-	p = s = kzalloc(count + 1, GFP_USER);
-	if (!s)
-		return -ENOMEM;
-	if (copy_from_user(s, buf, count)) {
-		count = -EFAULT;
-		goto out;
-	}
-
-	if (s[count - 1] == '\n')
-		s[count - 1] = '\0';
-
-	enable = strcmp("disable", s) != 0;
-	if (!enable)
-		goto apply;
-
-	/* enable or disable trace multi rss filter */
-	if (adap->trace_rss)
-		t4_write_reg(adap, MPS_TRC_CFG_A, TRC_RSS_ENABLE);
-	else
-		t4_write_reg(adap, MPS_TRC_CFG_A, TRC_RSS_DISABLE);
-
-	memset(&tp, 0, sizeof(tp));
-	tp.port = TRC_PORT_NONE;
-	i = 0;	/* counts pattern nibbles */
-
-	while (p) {
-		while (isspace(*p))
-			p++;
-		word = strsep(&p, " ");
-		if (!*word)
-			break;
-
-		if (!strncmp(word, "qid=", 4)) {
-			end = (char *)word + 4;
-			ret = kstrtouint(end, 10, &j);
-			if (ret)
-				goto out;
-			if (!adap->trace_rss) {
-				t4_write_reg(adap, MPS_T5_TRC_RSS_CONTROL_A, j);
-				continue;
-			}
-
-			switch (trcidx) {
-			case 0:
-				t4_write_reg(adap, MPS_TRC_RSS_CONTROL_A, j);
-				break;
-			case 1:
-				t4_write_reg(adap,
-					     MPS_TRC_FILTER1_RSS_CONTROL_A, j);
-				break;
-			case 2:
-				t4_write_reg(adap,
-					     MPS_TRC_FILTER2_RSS_CONTROL_A, j);
-				break;
-			case 3:
-				t4_write_reg(adap,
-					     MPS_TRC_FILTER3_RSS_CONTROL_A, j);
-				break;
-			}
-			continue;
-		}
-		if (!strncmp(word, "snaplen=", 8)) {
-			end = (char *)word + 8;
-			ret = kstrtouint(end, 10, &j);
-			if (ret || j > 9600) {
-inval:				count = -EINVAL;
-				goto out;
-			}
-			tp.snap_len = j;
-			continue;
-		}
-		if (!strncmp(word, "minlen=", 7)) {
-			end = (char *)word + 7;
-			ret = kstrtouint(end, 10, &j);
-			if (ret || j > TFMINPKTSIZE_M)
-				goto inval;
-			tp.min_len = j;
-			continue;
-		}
-		if (!strcmp(word, "not")) {
-			tp.invert = !tp.invert;
-			continue;
-		}
-		if (!strncmp(word, "loopback", 8) && tp.port == TRC_PORT_NONE) {
-			if (word[8] < '0' || word[8] > '3' || word[9])
-				goto inval;
-			tp.port = word[8] - '0' + 8;
-			continue;
-		}
-		if (!strncmp(word, "tx", 2) && tp.port == TRC_PORT_NONE) {
-			if (word[2] < '0' || word[2] > '3' || word[3])
-				goto inval;
-			tp.port = word[2] - '0' + 4;
-			if (adap->chan_map[tp.port & 3] >= MAX_NPORTS)
-				goto inval;
-			continue;
-		}
-		if (!strncmp(word, "rx", 2) && tp.port == TRC_PORT_NONE) {
-			if (word[2] < '0' || word[2] > '3' || word[3])
-				goto inval;
-			tp.port = word[2] - '0';
-			if (adap->chan_map[tp.port] >= MAX_NPORTS)
-				goto inval;
-			continue;
-		}
-		if (!isxdigit(*word))
-			goto inval;
-
-		/* we have found a trace pattern */
-		if (i) {                            /* split pattern */
-			if (tp.skip_len)            /* too many splits */
-				goto inval;
-			tp.skip_ofst = i / 16;
-		}
-
-		data = &tp.data[i / 8];
-		mask = &tp.mask[i / 8];
-		j = i;
-
-		while (isxdigit(*word)) {
-			if (i >= TRACE_LEN * 2) {
-				count = -EFBIG;
-				goto out;
-			}
-			*data = (*data << 4) + xdigit2int(*word++);
-			if (++i % 8 == 0)
-				data++;
-		}
-		if (*word == '/') {
-			word++;
-			while (isxdigit(*word)) {
-				if (j >= i)         /* mask longer than data */
-					goto inval;
-				*mask = (*mask << 4) + xdigit2int(*word++);
-				if (++j % 8 == 0)
-					mask++;
-			}
-			if (i != j)                 /* mask shorter than data */
-				goto inval;
-		} else {                            /* no mask, use all 1s */
-			for ( ; i - j >= 8; j += 8)
-				*mask++ = 0xffffffff;
-			if (i % 8)
-				*mask = (1 << (i % 8) * 4) - 1;
-		}
-		if (*word == '@') {
-			end = (char *)word + 1;
-			ret = kstrtouint(end, 10, &j);
-			if (*end && *end != '\n')
-				goto inval;
-			if (j & 7)          /* doesn't start at multiple of 8 */
-				goto inval;
-			j /= 8;
-			if (j < tp.skip_ofst)     /* overlaps earlier pattern */
-				goto inval;
-			if (j - tp.skip_ofst > 31)            /* skip too big */
-				goto inval;
-			tp.skip_len = j - tp.skip_ofst;
-		}
-		if (i % 8) {
-			*data <<= (8 - i % 8) * 4;
-			*mask <<= (8 - i % 8) * 4;
-			i = (i + 15) & ~15;         /* 8-byte align */
-		}
-	}
-
-	if (tp.port == TRC_PORT_NONE)
-		goto inval;
-
-apply:
-	i = t4_set_trace_filter(adap, &tp, trcidx, enable);
-	if (i)
-		count = i;
-out:
-	kfree(s);
-	return count;
-}
-
-static const struct file_operations mps_trc_debugfs_fops = {
-	.owner   = THIS_MODULE,
-	.open    = mps_trc_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = single_release,
-	.write   = mps_trc_write
-};
-
 static ssize_t flash_read(struct file *file, char __user *buf, size_t count,
 			  loff_t *ppos)
 {
@@ -1674,7 +1073,6 @@ static const struct file_operations flash_debugfs_fops = {
 	.owner   = THIS_MODULE,
 	.open    = mem_open,
 	.read    = flash_read,
-	.llseek  = default_llseek,
 };
 
 static inline void tcamxy2valmask(u64 x, u64 y, u8 *addr, u64 *mask)
@@ -1686,122 +1084,41 @@ static inline void tcamxy2valmask(u64 x, u64 y, u8 *addr, u64 *mask)
 
 static int mps_tcam_show(struct seq_file *seq, void *v)
 {
-	struct adapter *adap = seq->private;
-	unsigned int chip_ver = CHELSIO_CHIP_VERSION(adap->params.chip);
-	if (v == SEQ_START_TOKEN) {
-		if (chip_ver > CHELSIO_T5) {
-			seq_puts(seq, "Idx  Ethernet address     Mask     "
-				 "  VNI   Mask   IVLAN Vld "
-				 "DIP_Hit   Lookup  Port "
-				 "Vld Ports PF  VF                           "
-				 "Replication                                "
-				 "    P0 P1 P2 P3  ML\n");
-		} else {
-			if (adap->params.arch.mps_rplc_size > 128)
-				seq_puts(seq, "Idx  Ethernet address     Mask     "
-					 "Vld Ports PF  VF                           "
-					 "Replication                                "
-					 "    P0 P1 P2 P3  ML\n");
-			else
-				seq_puts(seq, "Idx  Ethernet address     Mask     "
-					 "Vld Ports PF  VF              Replication"
-					 "	         P0 P1 P2 P3  ML\n");
-		}
-	} else {
+	if (v == SEQ_START_TOKEN)
+		seq_puts(seq, "Idx  Ethernet address     Mask     Vld Ports PF"
+			 "  VF              Replication             "
+			 "P0 P1 P2 P3  ML\n");
+	else {
 		u64 mask;
 		u8 addr[ETH_ALEN];
-		bool replicate, dip_hit = false, vlan_vld = false;
+		struct adapter *adap = seq->private;
 		unsigned int idx = (uintptr_t)v - 2;
-		u64 tcamy, tcamx, val;
-		u32 cls_lo, cls_hi, ctl, data2, vnix = 0, vniy = 0;
-		u32 rplc[8] = {0};
-		u8 lookup_type = 0, port_num = 0;
-		u16 ivlan = 0;
-
-		if (chip_ver > CHELSIO_T5) {
-			/* CtlCmdType - 0: Read, 1: Write
-			 * CtlTcamSel - 0: TCAM0, 1: TCAM1
-			 * CtlXYBitSel- 0: Y bit, 1: X bit
-			 */
-
-			/* Read tcamy */
-			ctl = CTLCMDTYPE_V(0) | CTLXYBITSEL_V(0);
-			if (idx < 256)
-				ctl |= CTLTCAMINDEX_V(idx) | CTLTCAMSEL_V(0);
-			else
-				ctl |= CTLTCAMINDEX_V(idx - 256) |
-				       CTLTCAMSEL_V(1);
-			t4_write_reg(adap, MPS_CLS_TCAM_DATA2_CTL_A, ctl);
-			val = t4_read_reg(adap, MPS_CLS_TCAM_DATA1_A);
-			tcamy = DMACH_G(val) << 32;
-			tcamy |= t4_read_reg(adap, MPS_CLS_TCAM_DATA0_A);
-			data2 = t4_read_reg(adap, MPS_CLS_TCAM_DATA2_CTL_A);
-			lookup_type = DATALKPTYPE_G(data2);
-			/* 0 - Outer header, 1 - Inner header
-			 * [71:48] bit locations are overloaded for
-			 * outer vs. inner lookup types.
-			 */
-			if (lookup_type && (lookup_type != DATALKPTYPE_M)) {
-				/* Inner header VNI */
-				vniy = (data2 & DATAVIDH2_F) |
-				       (DATAVIDH1_G(data2) << 16) | VIDL_G(val);
-				dip_hit = data2 & DATADIPHIT_F;
-			} else {
-				vlan_vld = data2 & DATAVIDH2_F;
-				ivlan = VIDL_G(val);
-			}
-			port_num = DATAPORTNUM_G(data2);
-
-			/* Read tcamx. Change the control param */
-			vnix = 0;
-			ctl |= CTLXYBITSEL_V(1);
-			t4_write_reg(adap, MPS_CLS_TCAM_DATA2_CTL_A, ctl);
-			val = t4_read_reg(adap, MPS_CLS_TCAM_DATA1_A);
-			tcamx = DMACH_G(val) << 32;
-			tcamx |= t4_read_reg(adap, MPS_CLS_TCAM_DATA0_A);
-			data2 = t4_read_reg(adap, MPS_CLS_TCAM_DATA2_CTL_A);
-			if (lookup_type && (lookup_type != DATALKPTYPE_M)) {
-				/* Inner header VNI mask */
-				vnix = (data2 & DATAVIDH2_F) |
-				       (DATAVIDH1_G(data2) << 16) | VIDL_G(val);
-			}
-		} else {
-			tcamy = t4_read_reg64(adap, MPS_CLS_TCAM_Y_L(idx));
-			tcamx = t4_read_reg64(adap, MPS_CLS_TCAM_X_L(idx));
-		}
-
-		cls_lo = t4_read_reg(adap, MPS_CLS_SRAM_L(idx));
-		cls_hi = t4_read_reg(adap, MPS_CLS_SRAM_H(idx));
+		u64 tcamy = t4_read_reg64(adap, MPS_CLS_TCAM_Y_L(idx));
+		u64 tcamx = t4_read_reg64(adap, MPS_CLS_TCAM_X_L(idx));
+		u32 cls_lo = t4_read_reg(adap, MPS_CLS_SRAM_L(idx));
+		u32 cls_hi = t4_read_reg(adap, MPS_CLS_SRAM_H(idx));
+		u32 rplc[4] = {0, 0, 0, 0};
 
 		if (tcamx & tcamy) {
 			seq_printf(seq, "%3u         -\n", idx);
 			goto out;
 		}
 
-		rplc[0] = rplc[1] = rplc[2] = rplc[3] = 0;
-		if (chip_ver > CHELSIO_T5)
-			replicate = (cls_lo & T6_REPLICATE_F);
-		else
-			replicate = (cls_lo & REPLICATE_F);
-
-		if (replicate) {
+		if (cls_lo & REPLICATE_F) {
 			struct fw_ldst_cmd ldst_cmd;
 			int ret;
-			struct fw_ldst_mps_rplc mps_rplc;
-			u32 ldst_addrspc;
 
 			memset(&ldst_cmd, 0, sizeof(ldst_cmd));
-			ldst_addrspc =
-				FW_LDST_CMD_ADDRSPACE_V(FW_LDST_ADDRSPC_MPS);
 			ldst_cmd.op_to_addrspace =
 				htonl(FW_CMD_OP_V(FW_LDST_CMD) |
 				      FW_CMD_REQUEST_F |
 				      FW_CMD_READ_F |
-				      ldst_addrspc);
+				      FW_LDST_CMD_ADDRSPACE_V(
+					      FW_LDST_ADDRSPC_MPS));
 			ldst_cmd.cycles_to_len16 = htonl(FW_LEN16(ldst_cmd));
-			ldst_cmd.u.mps.rplc.fid_idx =
+			ldst_cmd.u.mps.fid_ctl =
 				htons(FW_LDST_CMD_FID_V(FW_LDST_MPS_RPLC) |
-				      FW_LDST_CMD_IDX_V(idx));
+				      FW_LDST_CMD_CTL_V(idx));
 			ret = t4_wr_mbox(adap, adap->mbox, &ldst_cmd,
 					 sizeof(ldst_cmd), &ldst_cmd);
 			if (ret)
@@ -1809,100 +1126,30 @@ static int mps_tcam_show(struct seq_file *seq, void *v)
 					 "replication map for idx %d: %d\n",
 					 idx, -ret);
 			else {
-				mps_rplc = ldst_cmd.u.mps.rplc;
-				rplc[0] = ntohl(mps_rplc.rplc31_0);
-				rplc[1] = ntohl(mps_rplc.rplc63_32);
-				rplc[2] = ntohl(mps_rplc.rplc95_64);
-				rplc[3] = ntohl(mps_rplc.rplc127_96);
-				if (adap->params.arch.mps_rplc_size > 128) {
-					rplc[4] = ntohl(mps_rplc.rplc159_128);
-					rplc[5] = ntohl(mps_rplc.rplc191_160);
-					rplc[6] = ntohl(mps_rplc.rplc223_192);
-					rplc[7] = ntohl(mps_rplc.rplc255_224);
-				}
+				rplc[0] = ntohl(ldst_cmd.u.mps.rplc31_0);
+				rplc[1] = ntohl(ldst_cmd.u.mps.rplc63_32);
+				rplc[2] = ntohl(ldst_cmd.u.mps.rplc95_64);
+				rplc[3] = ntohl(ldst_cmd.u.mps.rplc127_96);
 			}
 		}
 
 		tcamxy2valmask(tcamx, tcamy, addr, &mask);
-		if (chip_ver > CHELSIO_T5) {
-			/* Inner header lookup */
-			if (lookup_type && (lookup_type != DATALKPTYPE_M)) {
-				seq_printf(seq,
-					   "%3u %02x:%02x:%02x:%02x:%02x:%02x "
-					   "%012llx %06x %06x    -    -   %3c"
-					   "      'I'  %4x   "
-					   "%3c   %#x%4u%4d", idx, addr[0],
-					   addr[1], addr[2], addr[3],
-					   addr[4], addr[5],
-					   (unsigned long long)mask,
-					   vniy, (vnix | vniy),
-					   dip_hit ? 'Y' : 'N',
-					   port_num,
-					   (cls_lo & T6_SRAM_VLD_F) ? 'Y' : 'N',
-					   PORTMAP_G(cls_hi),
-					   T6_PF_G(cls_lo),
-					   (cls_lo & T6_VF_VALID_F) ?
-					   T6_VF_G(cls_lo) : -1);
-			} else {
-				seq_printf(seq,
-					   "%3u %02x:%02x:%02x:%02x:%02x:%02x "
-					   "%012llx    -       -   ",
-					   idx, addr[0], addr[1], addr[2],
-					   addr[3], addr[4], addr[5],
-					   (unsigned long long)mask);
-
-				if (vlan_vld)
-					seq_printf(seq, "%4u   Y     ", ivlan);
-				else
-					seq_puts(seq, "  -    N     ");
-
-				seq_printf(seq,
-					   "-      %3c  %4x   %3c   %#x%4u%4d",
-					   lookup_type ? 'I' : 'O', port_num,
-					   (cls_lo & T6_SRAM_VLD_F) ? 'Y' : 'N',
-					   PORTMAP_G(cls_hi),
-					   T6_PF_G(cls_lo),
-					   (cls_lo & T6_VF_VALID_F) ?
-					   T6_VF_G(cls_lo) : -1);
-			}
-		} else
-			seq_printf(seq, "%3u %02x:%02x:%02x:%02x:%02x:%02x "
-				   "%012llx%3c   %#x%4u%4d",
-				   idx, addr[0], addr[1], addr[2], addr[3],
-				   addr[4], addr[5], (unsigned long long)mask,
-				   (cls_lo & SRAM_VLD_F) ? 'Y' : 'N',
-				   PORTMAP_G(cls_hi),
-				   PF_G(cls_lo),
-				   (cls_lo & VF_VALID_F) ? VF_G(cls_lo) : -1);
-
-		if (replicate) {
-			if (adap->params.arch.mps_rplc_size > 128)
-				seq_printf(seq, " %08x %08x %08x %08x "
-					   "%08x %08x %08x %08x",
-					   rplc[7], rplc[6], rplc[5], rplc[4],
-					   rplc[3], rplc[2], rplc[1], rplc[0]);
-			else
-				seq_printf(seq, " %08x %08x %08x %08x",
-					   rplc[3], rplc[2], rplc[1], rplc[0]);
-		} else {
-			if (adap->params.arch.mps_rplc_size > 128)
-				seq_printf(seq, "%72c", ' ');
-			else
-				seq_printf(seq, "%36c", ' ');
-		}
-
-		if (chip_ver > CHELSIO_T5)
-			seq_printf(seq, "%4u%3u%3u%3u %#x\n",
-				   T6_SRAM_PRIO0_G(cls_lo),
-				   T6_SRAM_PRIO1_G(cls_lo),
-				   T6_SRAM_PRIO2_G(cls_lo),
-				   T6_SRAM_PRIO3_G(cls_lo),
-				   (cls_lo >> T6_MULTILISTEN0_S) & 0xf);
+		seq_printf(seq, "%3u %02x:%02x:%02x:%02x:%02x:%02x %012llx"
+			   "%3c   %#x%4u%4d",
+			   idx, addr[0], addr[1], addr[2], addr[3], addr[4],
+			   addr[5], (unsigned long long)mask,
+			   (cls_lo & SRAM_VLD_F) ? 'Y' : 'N', PORTMAP_G(cls_hi),
+			   PF_G(cls_lo),
+			   (cls_lo & VF_VALID_F) ? VF_G(cls_lo) : -1);
+		if (cls_lo & REPLICATE_F)
+			seq_printf(seq, " %08x %08x %08x %08x",
+				   rplc[3], rplc[2], rplc[1], rplc[0]);
 		else
-			seq_printf(seq, "%4u%3u%3u%3u %#x\n",
-				   SRAM_PRIO0_G(cls_lo), SRAM_PRIO1_G(cls_lo),
-				   SRAM_PRIO2_G(cls_lo), SRAM_PRIO3_G(cls_lo),
-				   (cls_lo >> MULTILISTEN0_S) & 0xf);
+			seq_printf(seq, "%36c", ' ');
+		seq_printf(seq, "%4u%3u%3u%3u %#x\n",
+			   SRAM_PRIO0_G(cls_lo), SRAM_PRIO1_G(cls_lo),
+			   SRAM_PRIO2_G(cls_lo), SRAM_PRIO3_G(cls_lo),
+			   (cls_lo >> MULTILISTEN0_S) & 0xf);
 	}
 out:	return 0;
 }
@@ -1975,7 +1222,7 @@ static int sensors_show(struct seq_file *seq, void *v)
 	param[1] = (FW_PARAMS_MNEM_V(FW_PARAMS_MNEM_DEV) |
 		    FW_PARAMS_PARAM_X_V(FW_PARAMS_PARAM_DEV_DIAG) |
 		    FW_PARAMS_PARAM_Y_V(FW_PARAM_DEV_DIAG_VDD));
-	ret = t4_query_params(adap, adap->mbox, adap->pf, 0, 2,
+	ret = t4_query_params(adap, adap->mbox, adap->fn, 0, 2,
 			      param, val);
 
 	if (ret < 0 || val[0] == 0)
@@ -2023,12 +1270,11 @@ static int rss_show(struct seq_file *seq, void *v, int idx)
 
 static int rss_open(struct inode *inode, struct file *file)
 {
-	struct adapter *adap = inode->i_private;
-	int ret, nentries;
+	int ret;
 	struct seq_tab *p;
+	struct adapter *adap = inode->i_private;
 
-	nentries = t4_chip_rss_size(adap);
-	p = seq_open_tab(file, nentries / 8, 8 * sizeof(u16), 0, rss_show);
+	p = seq_open_tab(file, RSS_NENTRIES / 8, 8 * sizeof(u16), 0, rss_show);
 	if (!p)
 		return -ENOMEM;
 
@@ -2170,9 +1416,6 @@ static int rss_config_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "  HashDelay:     %3d\n", HASHDELAY_G(rssconf));
 	if (CHELSIO_CHIP_VERSION(adapter->params.chip) <= CHELSIO_T5)
 		seq_printf(seq, "  VfWrAddr:      %3d\n", VFWRADDR_G(rssconf));
-	else
-		seq_printf(seq, "  VfWrAddr:      %3d\n",
-			   T6_VFWRADDR_G(rssconf));
 	seq_printf(seq, "  KeyMode:       %s\n", keymode[KEYMODE_G(rssconf)]);
 	seq_printf(seq, "  VfWrEn:        %3s\n", yesno(rssconf & VFWREN_F));
 	seq_printf(seq, "  KeyWrEn:       %3s\n", yesno(rssconf & KEYWREN_F));
@@ -2218,7 +1461,7 @@ static int rss_key_show(struct seq_file *seq, void *v)
 {
 	u32 key[10];
 
-	t4_read_rss_key(seq->private, key, true);
+	t4_read_rss_key(seq->private, key);
 	seq_printf(seq, "%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x\n",
 		   key[9], key[8], key[7], key[6], key[5], key[4], key[3],
 		   key[2], key[1], key[0]);
@@ -2255,7 +1498,7 @@ static ssize_t rss_key_write(struct file *file, const char __user *buf,
 		}
 	}
 
-	t4_write_rss_key(adap, key, -1, true);
+	t4_write_rss_key(adap, key, -1);
 	return count;
 }
 
@@ -2332,13 +1575,12 @@ static int rss_pf_config_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 
 	pfconf = (struct rss_pf_conf *)p->data;
-	rss_pf_map = t4_read_rss_pf_map(adapter, true);
-	rss_pf_mask = t4_read_rss_pf_mask(adapter, true);
+	rss_pf_map = t4_read_rss_pf_map(adapter);
+	rss_pf_mask = t4_read_rss_pf_mask(adapter);
 	for (pf = 0; pf < 8; pf++) {
 		pfconf[pf].rss_pf_map = rss_pf_map;
 		pfconf[pf].rss_pf_mask = rss_pf_mask;
-		t4_read_rss_pf_config(adapter, pf, &pfconf[pf].rss_pf_config,
-				      true);
+		t4_read_rss_pf_config(adapter, pf, &pfconf[pf].rss_pf_config);
 	}
 	return 0;
 }
@@ -2392,16 +1634,16 @@ static int rss_vf_config_open(struct inode *inode, struct file *file)
 	struct adapter *adapter = inode->i_private;
 	struct seq_tab *p;
 	struct rss_vf_conf *vfconf;
-	int vf, vfcount = adapter->params.arch.vfcount;
+	int vf;
 
-	p = seq_open_tab(file, vfcount, sizeof(*vfconf), 1, rss_vf_config_show);
+	p = seq_open_tab(file, 128, sizeof(*vfconf), 1, rss_vf_config_show);
 	if (!p)
 		return -ENOMEM;
 
 	vfconf = (struct rss_vf_conf *)p->data;
-	for (vf = 0; vf < vfcount; vf++) {
+	for (vf = 0; vf < 128; vf++) {
 		t4_read_rss_vf_config(adapter, vf, &vfconf[vf].rss_vf_vfl,
-				      &vfconf[vf].rss_vf_vfh, true);
+				      &vfconf[vf].rss_vf_vfh);
 	}
 	return 0;
 }
@@ -2440,11 +1682,15 @@ static int sge_qinfo_show(struct seq_file *seq, void *v)
 {
 	struct adapter *adap = seq->private;
 	int eth_entries = DIV_ROUND_UP(adap->sge.ethqsets, 4);
-	int ofld_entries = DIV_ROUND_UP(adap->sge.ofldqsets, 4);
+	int toe_entries = DIV_ROUND_UP(adap->sge.ofldqsets, 4);
+	int rdma_entries = DIV_ROUND_UP(adap->sge.rdmaqs, 4);
+	int ciq_entries = DIV_ROUND_UP(adap->sge.rdmaciqs, 4);
 	int ctrl_entries = DIV_ROUND_UP(MAX_CTRL_QUEUES, 4);
 	int i, r = (uintptr_t)v - 1;
-	int ofld_idx = r - eth_entries;
-	int ctrl_idx =  ofld_idx - ofld_entries;
+	int toe_idx = r - eth_entries;
+	int rdma_idx = toe_idx - toe_entries;
+	int ciq_idx = rdma_idx - rdma_entries;
+	int ctrl_idx =  ciq_idx - ciq_entries;
 	int fq_idx =  ctrl_idx - ctrl_entries;
 
 	if (r)
@@ -2458,12 +1704,8 @@ do { \
 		seq_putc(seq, '\n'); \
 } while (0)
 #define S(s, v) S3("s", s, v)
-#define T3(fmt_spec, s, v) S3(fmt_spec, s, tx[i].v)
 #define T(s, v) S3("u", s, tx[i].v)
-#define TL(s, v) T3("lu", s, v)
-#define R3(fmt_spec, s, v) S3(fmt_spec, s, rx[i].v)
 #define R(s, v) S3("u", s, rx[i].v)
-#define RL(s, v) R3("lu", s, v)
 
 	if (r < eth_entries) {
 		int base_qset = r * 4;
@@ -2502,24 +1744,68 @@ do { \
 		R("FL avail:", fl.avail);
 		R("FL PIDX:", fl.pidx);
 		R("FL CIDX:", fl.cidx);
-		RL("RxPackets:", stats.pkts);
-		RL("RxCSO:", stats.rx_cso);
-		RL("VLANxtract:", stats.vlan_ex);
-		RL("LROmerged:", stats.lro_merged);
-		RL("LROpackets:", stats.lro_pkts);
-		RL("RxDrops:", stats.rx_drops);
-		TL("TSO:", tso);
-		TL("TxCSO:", tx_cso);
-		TL("VLANins:", vlan_ins);
-		TL("TxQFull:", q.stops);
-		TL("TxQRestarts:", q.restarts);
-		TL("TxMapErr:", mapping_err);
-		RL("FLAllocErr:", fl.alloc_failed);
-		RL("FLLrgAlcErr:", fl.large_alloc_failed);
-		RL("FLMapErr:", fl.mapping_err);
-		RL("FLLow:", fl.low);
-		RL("FLStarving:", fl.starving);
+	} else if (toe_idx < toe_entries) {
+		const struct sge_ofld_rxq *rx = &adap->sge.ofldrxq[toe_idx * 4];
+		const struct sge_ofld_txq *tx = &adap->sge.ofldtxq[toe_idx * 4];
+		int n = min(4, adap->sge.ofldqsets - 4 * toe_idx);
 
+		S("QType:", "TOE");
+		T("TxQ ID:", q.cntxt_id);
+		T("TxQ size:", q.size);
+		T("TxQ inuse:", q.in_use);
+		T("TxQ CIDX:", q.cidx);
+		T("TxQ PIDX:", q.pidx);
+		R("RspQ ID:", rspq.abs_id);
+		R("RspQ size:", rspq.size);
+		R("RspQE size:", rspq.iqe_len);
+		R("RspQ CIDX:", rspq.cidx);
+		R("RspQ Gen:", rspq.gen);
+		S3("u", "Intr delay:", qtimer_val(adap, &rx[i].rspq));
+		S3("u", "Intr pktcnt:",
+		   adap->sge.counter_val[rx[i].rspq.pktcnt_idx]);
+		R("FL ID:", fl.cntxt_id);
+		R("FL size:", fl.size - 8);
+		R("FL pend:", fl.pend_cred);
+		R("FL avail:", fl.avail);
+		R("FL PIDX:", fl.pidx);
+		R("FL CIDX:", fl.cidx);
+	} else if (rdma_idx < rdma_entries) {
+		const struct sge_ofld_rxq *rx =
+				&adap->sge.rdmarxq[rdma_idx * 4];
+		int n = min(4, adap->sge.rdmaqs - 4 * rdma_idx);
+
+		S("QType:", "RDMA-CPL");
+		S("Interface:",
+		  rx[i].rspq.netdev ? rx[i].rspq.netdev->name : "N/A");
+		R("RspQ ID:", rspq.abs_id);
+		R("RspQ size:", rspq.size);
+		R("RspQE size:", rspq.iqe_len);
+		R("RspQ CIDX:", rspq.cidx);
+		R("RspQ Gen:", rspq.gen);
+		S3("u", "Intr delay:", qtimer_val(adap, &rx[i].rspq));
+		S3("u", "Intr pktcnt:",
+		   adap->sge.counter_val[rx[i].rspq.pktcnt_idx]);
+		R("FL ID:", fl.cntxt_id);
+		R("FL size:", fl.size - 8);
+		R("FL pend:", fl.pend_cred);
+		R("FL avail:", fl.avail);
+		R("FL PIDX:", fl.pidx);
+		R("FL CIDX:", fl.cidx);
+	} else if (ciq_idx < ciq_entries) {
+		const struct sge_ofld_rxq *rx = &adap->sge.rdmaciq[ciq_idx * 4];
+		int n = min(4, adap->sge.rdmaciqs - 4 * ciq_idx);
+
+		S("QType:", "RDMA-CIQ");
+		S("Interface:",
+		  rx[i].rspq.netdev ? rx[i].rspq.netdev->name : "N/A");
+		R("RspQ ID:", rspq.abs_id);
+		R("RspQ size:", rspq.size);
+		R("RspQE size:", rspq.iqe_len);
+		R("RspQ CIDX:", rspq.cidx);
+		R("RspQ Gen:", rspq.gen);
+		S3("u", "Intr delay:", qtimer_val(adap, &rx[i].rspq));
+		S3("u", "Intr pktcnt:",
+		   adap->sge.counter_val[rx[i].rspq.pktcnt_idx]);
 	} else if (ctrl_idx < ctrl_entries) {
 		const struct sge_ctrl_txq *tx = &adap->sge.ctrlq[ctrl_idx * 4];
 		int n = min(4, adap->params.nports - 4 * ctrl_idx);
@@ -2530,8 +1816,6 @@ do { \
 		T("TxQ inuse:", q.in_use);
 		T("TxQ CIDX:", q.cidx);
 		T("TxQ PIDX:", q.pidx);
-		TL("TxQFull:", q.stops);
-		TL("TxQRestarts:", q.restarts);
 	} else if (fq_idx == 0) {
 		const struct sge_rspq *evtq = &adap->sge.fw_evtq;
 
@@ -2547,20 +1831,18 @@ do { \
 			   adap->sge.counter_val[evtq->pktcnt_idx]);
 	}
 #undef R
-#undef RL
 #undef T
-#undef TL
 #undef S
-#undef R3
-#undef T3
 #undef S3
-	return 0;
+return 0;
 }
 
 static int sge_queue_entries(const struct adapter *adap)
 {
 	return DIV_ROUND_UP(adap->sge.ethqsets, 4) +
 	       DIV_ROUND_UP(adap->sge.ofldqsets, 4) +
+	       DIV_ROUND_UP(adap->sge.rdmaqs, 4) +
+	       DIV_ROUND_UP(adap->sge.rdmaciqs, 4) +
 	       DIV_ROUND_UP(MAX_CTRL_QUEUES, 4) + 1;
 }
 
@@ -2617,7 +1899,7 @@ int mem_open(struct inode *inode, struct file *file)
 
 	file->private_data = inode->i_private;
 
-	mem = (uintptr_t)file->private_data & 0x7;
+	mem = (uintptr_t)file->private_data & 0x3;
 	adap = file->private_data - mem;
 
 	(void)t4_fwcache(adap, FW_PARAM_DEV_FWCACHE_FLUSH);
@@ -2630,7 +1912,7 @@ static ssize_t mem_read(struct file *file, char __user *buf, size_t count,
 {
 	loff_t pos = *ppos;
 	loff_t avail = file_inode(file)->i_size;
-	unsigned int mem = (uintptr_t)file->private_data & 0x7;
+	unsigned int mem = (uintptr_t)file->private_data & 3;
 	struct adapter *adap = file->private_data - mem;
 	__be32 *data;
 	int ret;
@@ -2642,7 +1924,7 @@ static ssize_t mem_read(struct file *file, char __user *buf, size_t count,
 	if (count > avail - pos)
 		count = avail - pos;
 
-	data = kvzalloc(count, GFP_KERNEL);
+	data = t4_alloc_mem(count);
 	if (!data)
 		return -ENOMEM;
 
@@ -2650,12 +1932,12 @@ static ssize_t mem_read(struct file *file, char __user *buf, size_t count,
 	ret = t4_memory_rw(adap, 0, mem, pos, count, data, T4_MEMORY_READ);
 	spin_unlock(&adap->win0_lock);
 	if (ret) {
-		kvfree(data);
+		t4_free_mem(data);
 		return ret;
 	}
 	ret = copy_to_user(buf, data, count);
 
-	kvfree(data);
+	t4_free_mem(data);
 	if (ret)
 		return -EFAULT;
 
@@ -2669,261 +1951,14 @@ static const struct file_operations mem_debugfs_fops = {
 	.llseek  = default_llseek,
 };
 
-static int tid_info_show(struct seq_file *seq, void *v)
-{
-	unsigned int tid_start = 0;
-	struct adapter *adap = seq->private;
-	const struct tid_info *t = &adap->tids;
-	enum chip_type chip = CHELSIO_CHIP_VERSION(adap->params.chip);
-
-	if (chip > CHELSIO_T5)
-		tid_start = t4_read_reg(adap, LE_DB_ACTIVE_TABLE_START_INDEX_A);
-
-	if (t4_read_reg(adap, LE_DB_CONFIG_A) & HASHEN_F) {
-		unsigned int sb;
-		seq_printf(seq, "Connections in use: %u\n",
-			   atomic_read(&t->conns_in_use));
-
-		if (chip <= CHELSIO_T5)
-			sb = t4_read_reg(adap, LE_DB_SERVER_INDEX_A) / 4;
-		else
-			sb = t4_read_reg(adap, LE_DB_SRVR_START_INDEX_A);
-
-		if (sb) {
-			seq_printf(seq, "TID range: %u..%u/%u..%u", tid_start,
-				   sb - 1, adap->tids.hash_base,
-				   t->ntids - 1);
-			seq_printf(seq, ", in use: %u/%u\n",
-				   atomic_read(&t->tids_in_use),
-				   atomic_read(&t->hash_tids_in_use));
-		} else if (adap->flags & FW_OFLD_CONN) {
-			seq_printf(seq, "TID range: %u..%u/%u..%u",
-				   t->aftid_base,
-				   t->aftid_end,
-				   adap->tids.hash_base,
-				   t->ntids - 1);
-			seq_printf(seq, ", in use: %u/%u\n",
-				   atomic_read(&t->tids_in_use),
-				   atomic_read(&t->hash_tids_in_use));
-		} else {
-			seq_printf(seq, "TID range: %u..%u",
-				   adap->tids.hash_base,
-				   t->ntids - 1);
-			seq_printf(seq, ", in use: %u\n",
-				   atomic_read(&t->hash_tids_in_use));
-		}
-	} else if (t->ntids) {
-		seq_printf(seq, "Connections in use: %u\n",
-			   atomic_read(&t->conns_in_use));
-
-		seq_printf(seq, "TID range: %u..%u", tid_start,
-			   tid_start + t->ntids - 1);
-		seq_printf(seq, ", in use: %u\n",
-			   atomic_read(&t->tids_in_use));
-	}
-
-	if (t->nstids)
-		seq_printf(seq, "STID range: %u..%u, in use-IPv4/IPv6: %u/%u\n",
-			   (!t->stid_base &&
-			   (chip <= CHELSIO_T5)) ?
-			   t->stid_base + 1 : t->stid_base,
-			   t->stid_base + t->nstids - 1,
-			   t->stids_in_use - t->v6_stids_in_use,
-			   t->v6_stids_in_use);
-
-	if (t->natids)
-		seq_printf(seq, "ATID range: 0..%u, in use: %u\n",
-			   t->natids - 1, t->atids_in_use);
-	seq_printf(seq, "FTID range: %u..%u\n", t->ftid_base,
-		   t->ftid_base + t->nftids - 1);
-	if (t->nsftids)
-		seq_printf(seq, "SFTID range: %u..%u in use: %u\n",
-			   t->sftid_base, t->sftid_base + t->nsftids - 2,
-			   t->sftids_in_use);
-	if (t->ntids)
-		seq_printf(seq, "HW TID usage: %u IP users, %u IPv6 users\n",
-			   t4_read_reg(adap, LE_DB_ACT_CNT_IPV4_A),
-			   t4_read_reg(adap, LE_DB_ACT_CNT_IPV6_A));
-	return 0;
-}
-
-DEFINE_SIMPLE_DEBUGFS_FILE(tid_info);
-
 static void add_debugfs_mem(struct adapter *adap, const char *name,
 			    unsigned int idx, unsigned int size_mb)
 {
-	debugfs_create_file_size(name, 0400, adap->debugfs_root,
+	debugfs_create_file_size(name, S_IRUSR, adap->debugfs_root,
 				 (void *)adap + idx, &mem_debugfs_fops,
 				 size_mb << 20);
 }
 
-static ssize_t blocked_fl_read(struct file *filp, char __user *ubuf,
-			       size_t count, loff_t *ppos)
-{
-	int len;
-	const struct adapter *adap = filp->private_data;
-	char *buf;
-	ssize_t size = (adap->sge.egr_sz + 3) / 4 +
-			adap->sge.egr_sz / 32 + 2; /* includes ,/\n/\0 */
-
-	buf = kzalloc(size, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-
-	len = snprintf(buf, size - 1, "%*pb\n",
-		       adap->sge.egr_sz, adap->sge.blocked_fl);
-	len += sprintf(buf + len, "\n");
-	size = simple_read_from_buffer(ubuf, count, ppos, buf, len);
-	kvfree(buf);
-	return size;
-}
-
-static ssize_t blocked_fl_write(struct file *filp, const char __user *ubuf,
-				size_t count, loff_t *ppos)
-{
-	int err;
-	unsigned long *t;
-	struct adapter *adap = filp->private_data;
-
-	t = kcalloc(BITS_TO_LONGS(adap->sge.egr_sz), sizeof(long), GFP_KERNEL);
-	if (!t)
-		return -ENOMEM;
-
-	err = bitmap_parse_user(ubuf, count, t, adap->sge.egr_sz);
-	if (err)
-		return err;
-
-	bitmap_copy(adap->sge.blocked_fl, t, adap->sge.egr_sz);
-	kvfree(t);
-	return count;
-}
-
-static const struct file_operations blocked_fl_fops = {
-	.owner   = THIS_MODULE,
-	.open    = simple_open,
-	.read    = blocked_fl_read,
-	.write   = blocked_fl_write,
-	.llseek  = generic_file_llseek,
-};
-
-static void mem_region_show(struct seq_file *seq, const char *name,
-			    unsigned int from, unsigned int to)
-{
-	char buf[40];
-
-	string_get_size((u64)to - from + 1, 1, STRING_UNITS_2, buf,
-			sizeof(buf));
-	seq_printf(seq, "%-15s %#x-%#x [%s]\n", name, from, to, buf);
-}
-
-static int meminfo_show(struct seq_file *seq, void *v)
-{
-	static const char * const memory[] = { "EDC0:", "EDC1:", "MC:",
-					       "MC0:", "MC1:", "HMA:"};
-	struct adapter *adap = seq->private;
-	struct cudbg_meminfo meminfo;
-	int i, rc;
-
-	memset(&meminfo, 0, sizeof(struct cudbg_meminfo));
-	rc = cudbg_fill_meminfo(adap, &meminfo);
-	if (rc)
-		return -ENXIO;
-
-	for (i = 0; i < meminfo.avail_c; i++)
-		mem_region_show(seq, memory[meminfo.avail[i].idx],
-				meminfo.avail[i].base,
-				meminfo.avail[i].limit - 1);
-
-	seq_putc(seq, '\n');
-	for (i = 0; i < meminfo.mem_c; i++) {
-		if (meminfo.mem[i].idx >= ARRAY_SIZE(cudbg_region))
-			continue;                        /* skip holes */
-		if (!meminfo.mem[i].limit)
-			meminfo.mem[i].limit =
-				i < meminfo.mem_c - 1 ?
-				meminfo.mem[i + 1].base - 1 : ~0;
-		mem_region_show(seq, cudbg_region[meminfo.mem[i].idx],
-				meminfo.mem[i].base, meminfo.mem[i].limit);
-	}
-
-	seq_putc(seq, '\n');
-	mem_region_show(seq, "uP RAM:", meminfo.up_ram_lo, meminfo.up_ram_hi);
-	mem_region_show(seq, "uP Extmem2:", meminfo.up_extmem2_lo,
-			meminfo.up_extmem2_hi);
-
-	seq_printf(seq, "\n%u Rx pages of size %uKiB for %u channels\n",
-		   meminfo.rx_pages_data[0], meminfo.rx_pages_data[1],
-		   meminfo.rx_pages_data[2]);
-
-	seq_printf(seq, "%u Tx pages of size %u%ciB for %u channels\n",
-		   meminfo.tx_pages_data[0], meminfo.tx_pages_data[1],
-		   meminfo.tx_pages_data[2], meminfo.tx_pages_data[3]);
-
-	seq_printf(seq, "%u p-structs\n\n", meminfo.p_structs);
-
-	for (i = 0; i < 4; i++)
-		/* For T6 these are MAC buffer groups */
-		seq_printf(seq, "Port %d using %u pages out of %u allocated\n",
-			   i, meminfo.port_used[i], meminfo.port_alloc[i]);
-
-	for (i = 0; i < adap->params.arch.nchan; i++)
-		/* For T6 these are MAC buffer groups */
-		seq_printf(seq,
-			   "Loopback %d using %u pages out of %u allocated\n",
-			   i, meminfo.loopback_used[i],
-			   meminfo.loopback_alloc[i]);
-
-	return 0;
-}
-
-static int meminfo_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, meminfo_show, inode->i_private);
-}
-
-static const struct file_operations meminfo_fops = {
-	.owner   = THIS_MODULE,
-	.open    = meminfo_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = single_release,
-};
-
-static int chcr_show(struct seq_file *seq, void *v)
-{
-	struct adapter *adap = seq->private;
-
-	seq_puts(seq, "Chelsio Crypto Accelerator Stats \n");
-	seq_printf(seq, "Cipher Ops: %10u \n",
-		   atomic_read(&adap->chcr_stats.cipher_rqst));
-	seq_printf(seq, "Digest Ops: %10u \n",
-		   atomic_read(&adap->chcr_stats.digest_rqst));
-	seq_printf(seq, "Aead Ops: %10u \n",
-		   atomic_read(&adap->chcr_stats.aead_rqst));
-	seq_printf(seq, "Completion: %10u \n",
-		   atomic_read(&adap->chcr_stats.complete));
-	seq_printf(seq, "Error: %10u \n",
-		   atomic_read(&adap->chcr_stats.error));
-	seq_printf(seq, "Fallback: %10u \n",
-		   atomic_read(&adap->chcr_stats.fallback));
-	seq_printf(seq, "IPSec PDU: %10u\n",
-		   atomic_read(&adap->chcr_stats.ipsec_cnt));
-	return 0;
-}
-
-
-static int chcr_stats_open(struct inode *inode, struct file *file)
-{
-        return single_open(file, chcr_show, inode->i_private);
-}
-
-static const struct file_operations chcr_stats_debugfs_fops = {
-        .owner   = THIS_MODULE,
-        .open    = chcr_stats_open,
-        .read    = seq_read,
-        .llseek  = seq_lseek,
-        .release = single_release,
-};
 /* Add an array of Debug FS files.
  */
 void add_debugfs_files(struct adapter *adap,
@@ -2943,69 +1978,57 @@ void add_debugfs_files(struct adapter *adap,
 int t4_setup_debugfs(struct adapter *adap)
 {
 	int i;
-	u32 size = 0;
+	u32 size;
 	struct dentry *de;
 
 	static struct t4_debugfs_entry t4_debugfs_files[] = {
-		{ "cim_la", &cim_la_fops, 0400, 0 },
-		{ "cim_pif_la", &cim_pif_la_fops, 0400, 0 },
-		{ "cim_ma_la", &cim_ma_la_fops, 0400, 0 },
-		{ "cim_qcfg", &cim_qcfg_fops, 0400, 0 },
-		{ "clk", &clk_debugfs_fops, 0400, 0 },
-		{ "devlog", &devlog_fops, 0400, 0 },
-		{ "mboxlog", &mboxlog_fops, 0400, 0 },
-		{ "mbox0", &mbox_debugfs_fops, 0600, 0 },
-		{ "mbox1", &mbox_debugfs_fops, 0600, 1 },
-		{ "mbox2", &mbox_debugfs_fops, 0600, 2 },
-		{ "mbox3", &mbox_debugfs_fops, 0600, 3 },
-		{ "mbox4", &mbox_debugfs_fops, 0600, 4 },
-		{ "mbox5", &mbox_debugfs_fops, 0600, 5 },
-		{ "mbox6", &mbox_debugfs_fops, 0600, 6 },
-		{ "mbox7", &mbox_debugfs_fops, 0600, 7 },
-		{ "trace0", &mps_trc_debugfs_fops, 0600, 0 },
-		{ "trace1", &mps_trc_debugfs_fops, 0600, 1 },
-		{ "trace2", &mps_trc_debugfs_fops, 0600, 2 },
-		{ "trace3", &mps_trc_debugfs_fops, 0600, 3 },
-		{ "l2t", &t4_l2t_fops, 0400, 0},
-		{ "mps_tcam", &mps_tcam_debugfs_fops, 0400, 0 },
-		{ "rss", &rss_debugfs_fops, 0400, 0 },
-		{ "rss_config", &rss_config_debugfs_fops, 0400, 0 },
-		{ "rss_key", &rss_key_debugfs_fops, 0400, 0 },
-		{ "rss_pf_config", &rss_pf_config_debugfs_fops, 0400, 0 },
-		{ "rss_vf_config", &rss_vf_config_debugfs_fops, 0400, 0 },
-		{ "sge_qinfo", &sge_qinfo_debugfs_fops, 0400, 0 },
-		{ "ibq_tp0",  &cim_ibq_fops, 0400, 0 },
-		{ "ibq_tp1",  &cim_ibq_fops, 0400, 1 },
-		{ "ibq_ulp",  &cim_ibq_fops, 0400, 2 },
-		{ "ibq_sge0", &cim_ibq_fops, 0400, 3 },
-		{ "ibq_sge1", &cim_ibq_fops, 0400, 4 },
-		{ "ibq_ncsi", &cim_ibq_fops, 0400, 5 },
-		{ "obq_ulp0", &cim_obq_fops, 0400, 0 },
-		{ "obq_ulp1", &cim_obq_fops, 0400, 1 },
-		{ "obq_ulp2", &cim_obq_fops, 0400, 2 },
-		{ "obq_ulp3", &cim_obq_fops, 0400, 3 },
-		{ "obq_sge",  &cim_obq_fops, 0400, 4 },
-		{ "obq_ncsi", &cim_obq_fops, 0400, 5 },
-		{ "tp_la", &tp_la_fops, 0400, 0 },
-		{ "ulprx_la", &ulprx_la_fops, 0400, 0 },
-		{ "sensors", &sensors_debugfs_fops, 0400, 0 },
-		{ "pm_stats", &pm_stats_debugfs_fops, 0400, 0 },
-		{ "tx_rate", &tx_rate_debugfs_fops, 0400, 0 },
-		{ "cctrl", &cctrl_tbl_debugfs_fops, 0400, 0 },
+		{ "cim_la", &cim_la_fops, S_IRUSR, 0 },
+		{ "cim_qcfg", &cim_qcfg_fops, S_IRUSR, 0 },
+		{ "clk", &clk_debugfs_fops, S_IRUSR, 0 },
+		{ "devlog", &devlog_fops, S_IRUSR, 0 },
+		{ "mbox0", &mbox_debugfs_fops, S_IRUSR | S_IWUSR, 0 },
+		{ "mbox1", &mbox_debugfs_fops, S_IRUSR | S_IWUSR, 1 },
+		{ "mbox2", &mbox_debugfs_fops, S_IRUSR | S_IWUSR, 2 },
+		{ "mbox3", &mbox_debugfs_fops, S_IRUSR | S_IWUSR, 3 },
+		{ "mbox4", &mbox_debugfs_fops, S_IRUSR | S_IWUSR, 4 },
+		{ "mbox5", &mbox_debugfs_fops, S_IRUSR | S_IWUSR, 5 },
+		{ "mbox6", &mbox_debugfs_fops, S_IRUSR | S_IWUSR, 6 },
+		{ "mbox7", &mbox_debugfs_fops, S_IRUSR | S_IWUSR, 7 },
+		{ "l2t", &t4_l2t_fops, S_IRUSR, 0},
+		{ "mps_tcam", &mps_tcam_debugfs_fops, S_IRUSR, 0 },
+		{ "rss", &rss_debugfs_fops, S_IRUSR, 0 },
+		{ "rss_config", &rss_config_debugfs_fops, S_IRUSR, 0 },
+		{ "rss_key", &rss_key_debugfs_fops, S_IRUSR, 0 },
+		{ "rss_pf_config", &rss_pf_config_debugfs_fops, S_IRUSR, 0 },
+		{ "rss_vf_config", &rss_vf_config_debugfs_fops, S_IRUSR, 0 },
+		{ "sge_qinfo", &sge_qinfo_debugfs_fops, S_IRUSR, 0 },
+		{ "ibq_tp0",  &cim_ibq_fops, S_IRUSR, 0 },
+		{ "ibq_tp1",  &cim_ibq_fops, S_IRUSR, 1 },
+		{ "ibq_ulp",  &cim_ibq_fops, S_IRUSR, 2 },
+		{ "ibq_sge0", &cim_ibq_fops, S_IRUSR, 3 },
+		{ "ibq_sge1", &cim_ibq_fops, S_IRUSR, 4 },
+		{ "ibq_ncsi", &cim_ibq_fops, S_IRUSR, 5 },
+		{ "obq_ulp0", &cim_obq_fops, S_IRUSR, 0 },
+		{ "obq_ulp1", &cim_obq_fops, S_IRUSR, 1 },
+		{ "obq_ulp2", &cim_obq_fops, S_IRUSR, 2 },
+		{ "obq_ulp3", &cim_obq_fops, S_IRUSR, 3 },
+		{ "obq_sge",  &cim_obq_fops, S_IRUSR, 4 },
+		{ "obq_ncsi", &cim_obq_fops, S_IRUSR, 5 },
+		{ "tp_la", &tp_la_fops, S_IRUSR, 0 },
+		{ "ulprx_la", &ulprx_la_fops, S_IRUSR, 0 },
+		{ "sensors", &sensors_debugfs_fops, S_IRUSR, 0 },
+		{ "pm_stats", &pm_stats_debugfs_fops, S_IRUSR, 0 },
+		{ "cctrl", &cctrl_tbl_debugfs_fops, S_IRUSR, 0 },
 #if IS_ENABLED(CONFIG_IPV6)
-		{ "clip_tbl", &clip_tbl_debugfs_fops, 0400, 0 },
+		{ "clip_tbl", &clip_tbl_debugfs_fops, S_IRUSR, 0 },
 #endif
-		{ "tids", &tid_info_debugfs_fops, 0400, 0},
-		{ "blocked_fl", &blocked_fl_fops, 0600, 0 },
-		{ "meminfo", &meminfo_fops, 0400, 0 },
-		{ "crypto", &chcr_stats_debugfs_fops, 0400, 0 },
 	};
 
 	/* Debug FS nodes common to all T5 and later adapters.
 	 */
 	static struct t4_debugfs_entry t5_debugfs_files[] = {
-		{ "obq_sge_rx_q0", &cim_obq_fops, 0400, 6 },
-		{ "obq_sge_rx_q1", &cim_obq_fops, 0400, 7 },
+		{ "obq_sge_rx_q0", &cim_obq_fops, S_IRUSR, 6 },
+		{ "obq_sge_rx_q1", &cim_obq_fops, S_IRUSR, 7 },
 	};
 
 	add_debugfs_files(adap,
@@ -3025,7 +2048,12 @@ int t4_setup_debugfs(struct adapter *adap)
 		size = t4_read_reg(adap, MA_EDRAM1_BAR_A);
 		add_debugfs_mem(adap, "edc1", MEM_EDC1, EDRAM1_SIZE_G(size));
 	}
-	if (is_t5(adap->params.chip)) {
+	if (is_t4(adap->params.chip)) {
+		size = t4_read_reg(adap, MA_EXT_MEMORY_BAR_A);
+		if (i & EXT_MEM_ENABLE_F)
+			add_debugfs_mem(adap, "mc", MEM_MC,
+					EXT_MEM_SIZE_G(size));
+	} else {
 		if (i & EXT_MEM0_ENABLE_F) {
 			size = t4_read_reg(adap, MA_EXT_MEMORY0_BAR_A);
 			add_debugfs_mem(adap, "mc0", MEM_MC0,
@@ -3036,26 +2064,10 @@ int t4_setup_debugfs(struct adapter *adap)
 			add_debugfs_mem(adap, "mc1", MEM_MC1,
 					EXT_MEM1_SIZE_G(size));
 		}
-	} else {
-		if (i & EXT_MEM_ENABLE_F) {
-			size = t4_read_reg(adap, MA_EXT_MEMORY_BAR_A);
-			add_debugfs_mem(adap, "mc", MEM_MC,
-					EXT_MEM_SIZE_G(size));
-		}
-
-		if (i & HMA_MUX_F) {
-			size = t4_read_reg(adap, MA_EXT_MEMORY1_BAR_A);
-			add_debugfs_mem(adap, "hma", MEM_HMA,
-					EXT_MEM1_SIZE_G(size));
-		}
 	}
 
-	de = debugfs_create_file_size("flash", 0400, adap->debugfs_root, adap,
+	de = debugfs_create_file_size("flash", S_IRUSR, adap->debugfs_root, adap,
 				      &flash_debugfs_fops, adap->params.sf_size);
-	debugfs_create_bool("use_backdoor", 0600,
-			    adap->debugfs_root, &adap->use_bd);
-	debugfs_create_bool("trace_rss", 0600,
-			    adap->debugfs_root, &adap->trace_rss);
 
 	return 0;
 }

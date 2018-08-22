@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Symbol USB barcode to serial driver
  *
  * Copyright (C) 2013 Johan Hovold <jhovold@gmail.com>
  * Copyright (C) 2009 Greg Kroah-Hartman <gregkh@suse.de>
  * Copyright (C) 2009 Novell Inc.
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License version
+ *	2 as published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -57,15 +60,17 @@ static void symbol_int_callback(struct urb *urb)
 
 	usb_serial_debug_data(&port->dev, __func__, urb->actual_length, data);
 
-	/*
-	 * Data from the device comes with a 1 byte header:
-	 *
-	 * <size of data> <data>...
-	 */
 	if (urb->actual_length > 1) {
-		data_length = data[0];
-		if (data_length > (urb->actual_length - 1))
-			data_length = urb->actual_length - 1;
+		data_length = urb->actual_length - 1;
+
+		/*
+		 * Data from the device comes with a 1 byte header:
+		 *
+		 * <size of data>data...
+		 * 	This is real data to be sent to the tty layer
+		 * we pretty much just ignore the size and send everything
+		 * else to the tty layer.
+		 */
 		tty_insert_flip_string(&port->port, &data[1], data_length);
 		tty_flip_buffer_push(&port->port);
 	} else {
@@ -144,6 +149,16 @@ static void symbol_unthrottle(struct tty_struct *tty)
 	}
 }
 
+static int symbol_startup(struct usb_serial *serial)
+{
+	if (!serial->num_interrupt_in) {
+		dev_err(&serial->dev->dev, "no interrupt-in endpoint\n");
+		return -ENODEV;
+	}
+
+	return 0;
+}
+
 static int symbol_port_probe(struct usb_serial_port *port)
 {
 	struct symbol_private *priv;
@@ -175,7 +190,7 @@ static struct usb_serial_driver symbol_device = {
 	},
 	.id_table =		id_table,
 	.num_ports =		1,
-	.num_interrupt_in =	1,
+	.attach =		symbol_startup,
 	.port_probe =		symbol_port_probe,
 	.port_remove =		symbol_port_remove,
 	.open =			symbol_open,
@@ -191,4 +206,4 @@ static struct usb_serial_driver * const serial_drivers[] = {
 
 module_usb_serial_driver(serial_drivers, id_table);
 
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

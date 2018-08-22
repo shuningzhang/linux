@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _UVC_QUEUE_H_
 #define _UVC_QUEUE_H_
 
@@ -7,7 +6,7 @@
 #include <linux/kernel.h>
 #include <linux/poll.h>
 #include <linux/videodev2.h>
-#include <media/videobuf2-v4l2.h>
+#include <media/videobuf2-core.h>
 
 /* Maximum frame size in bytes, for sanity checking. */
 #define UVC_MAX_FRAME_SIZE	(16*1024*1024)
@@ -27,7 +26,7 @@ enum uvc_buffer_state {
 };
 
 struct uvc_buffer {
-	struct vb2_v4l2_buffer buf;
+	struct vb2_buffer buf;
 	struct list_head queue;
 
 	enum uvc_buffer_state state;
@@ -72,7 +71,7 @@ int uvcg_queue_buffer(struct uvc_video_queue *queue, struct v4l2_buffer *buf);
 int uvcg_dequeue_buffer(struct uvc_video_queue *queue,
 			struct v4l2_buffer *buf, int nonblocking);
 
-__poll_t uvcg_queue_poll(struct uvc_video_queue *queue,
+unsigned int uvcg_queue_poll(struct uvc_video_queue *queue,
 			     struct file *file, poll_table *wait);
 
 int uvcg_queue_mmap(struct uvc_video_queue *queue, struct vm_area_struct *vma);

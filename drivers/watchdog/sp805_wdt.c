@@ -4,7 +4,7 @@
  * Watchdog driver for ARM SP805 watchdog module
  *
  * Copyright (C) 2010 ST Microelectronics
- * Viresh Kumar <vireshk@kernel.org>
+ * Viresh Kumar <viresh.linux@gmail.com>
  *
  * This file is licensed under the terms of the GNU General Public
  * License version 2 or later. This program is licensed "as is" without any
@@ -121,18 +121,6 @@ static unsigned int wdt_timeleft(struct watchdog_device *wdd)
 	return div_u64(load, rate);
 }
 
-static int
-wdt_restart(struct watchdog_device *wdd, unsigned long mode, void *cmd)
-{
-	struct sp805_wdt *wdt = watchdog_get_drvdata(wdd);
-
-	writel_relaxed(0, wdt->base + WDTCONTROL);
-	writel_relaxed(0, wdt->base + WDTLOAD);
-	writel_relaxed(INT_ENABLE | RESET_ENABLE, wdt->base + WDTCONTROL);
-
-	return 0;
-}
-
 static int wdt_config(struct watchdog_device *wdd, bool ping)
 {
 	struct sp805_wdt *wdt = watchdog_get_drvdata(wdd);
@@ -151,11 +139,12 @@ static int wdt_config(struct watchdog_device *wdd, bool ping)
 
 	writel_relaxed(UNLOCK, wdt->base + WDTLOCK);
 	writel_relaxed(wdt->load_val, wdt->base + WDTLOAD);
-	writel_relaxed(INT_MASK, wdt->base + WDTINTCLR);
 
-	if (!ping)
+	if (!ping) {
+		writel_relaxed(INT_MASK, wdt->base + WDTINTCLR);
 		writel_relaxed(INT_ENABLE | RESET_ENABLE, wdt->base +
 				WDTCONTROL);
+	}
 
 	writel_relaxed(LOCK, wdt->base + WDTLOCK);
 
@@ -209,7 +198,6 @@ static const struct watchdog_ops wdt_ops = {
 	.ping		= wdt_ping,
 	.set_timeout	= wdt_setload,
 	.get_timeleft	= wdt_timeleft,
-	.restart	= wdt_restart,
 };
 
 static int
@@ -238,12 +226,10 @@ sp805_wdt_probe(struct amba_device *adev, const struct amba_id *id)
 	wdt->adev = adev;
 	wdt->wdd.info = &wdt_info;
 	wdt->wdd.ops = &wdt_ops;
-	wdt->wdd.parent = &adev->dev;
 
 	spin_lock_init(&wdt->lock);
 	watchdog_set_nowayout(&wdt->wdd, nowayout);
 	watchdog_set_drvdata(&wdt->wdd, wdt);
-	watchdog_set_restart_priority(&wdt->wdd, 128);
 	wdt_setload(&wdt->wdd, DEFAULT_TIMEOUT);
 
 	ret = watchdog_register_device(&wdt->wdd);
@@ -295,7 +281,7 @@ static int __maybe_unused sp805_wdt_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(sp805_wdt_dev_pm_ops, sp805_wdt_suspend,
 		sp805_wdt_resume);
 
-static const struct amba_id sp805_wdt_ids[] = {
+static struct amba_id sp805_wdt_ids[] = {
 	{
 		.id	= 0x00141805,
 		.mask	= 0x00ffffff,
@@ -317,6 +303,6 @@ static struct amba_driver sp805_wdt_driver = {
 
 module_amba_driver(sp805_wdt_driver);
 
-MODULE_AUTHOR("Viresh Kumar <vireshk@kernel.org>");
+MODULE_AUTHOR("Viresh Kumar <viresh.linux@gmail.com>");
 MODULE_DESCRIPTION("ARM SP805 Watchdog Driver");
 MODULE_LICENSE("GPL");

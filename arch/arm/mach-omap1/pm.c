@@ -55,14 +55,13 @@
 #include <mach/tc.h>
 #include <mach/mux.h>
 #include <linux/omap-dma.h>
-#include <clocksource/timer-ti-dm.h>
+#include <plat/dmtimer.h>
 
 #include <mach/irqs.h>
 
 #include "iomap.h"
 #include "clock.h"
 #include "pm.h"
-#include "soc.h"
 #include "sram.h"
 
 static unsigned int arm_sleep_save[ARM_SLEEP_SAVE_SIZE];
@@ -581,6 +580,7 @@ static int omap_pm_enter(suspend_state_t state)
 {
 	switch (state)
 	{
+	case PM_SUSPEND_STANDBY:
 	case PM_SUSPEND_MEM:
 		omap1_pm_suspend();
 		break;

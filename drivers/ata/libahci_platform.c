@@ -295,7 +295,6 @@ static int ahci_platform_get_phy(struct ahci_host_priv *hpriv, u32 port,
 				node->name);
 			break;
 		}
-		/* fall through */
 	case -ENODEV:
 		/* continue normally */
 		hpriv->phys[port] = NULL;
@@ -340,7 +339,7 @@ static int ahci_platform_get_regulator(struct ahci_host_priv *hpriv, u32 port,
  * 2) regulator for controlling the targets power (optional)
  * 3) 0 - AHCI_MAX_CLKS clocks, as specified in the devs devicetree node,
  *    or for non devicetree enabled platforms a single clock
- * 4) phys (optional)
+ *	4) phys (optional)
  *
  * RETURNS:
  * The allocated ahci_host_priv on success, otherwise an ERR_PTR value
@@ -515,12 +514,9 @@ int ahci_platform_init_host(struct platform_device *pdev,
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq <= 0) {
-		if (irq != -EPROBE_DEFER)
-			dev_err(dev, "no irq\n");
-		return irq;
+		dev_err(dev, "no irq\n");
+		return -EINVAL;
 	}
-
-	hpriv->irq = irq;
 
 	/* prepare host */
 	pi.private_data = (void *)(unsigned long)hpriv->flags;
@@ -592,7 +588,7 @@ int ahci_platform_init_host(struct platform_device *pdev,
 	ahci_init_controller(host);
 	ahci_print_info(host, "platform");
 
-	return ahci_host_activate(host, sht);
+	return ahci_host_activate(host, irq, sht);
 }
 EXPORT_SYMBOL_GPL(ahci_platform_init_host);
 
@@ -602,40 +598,6 @@ static void ahci_host_stop(struct ata_host *host)
 
 	ahci_platform_disable_resources(hpriv);
 }
-
-/**
- * ahci_platform_shutdown - Disable interrupts and stop DMA for host ports
- * @dev: platform device pointer for the host
- *
- * This function is called during system shutdown and performs the minimal
- * deconfiguration required to ensure that an ahci_platform host cannot
- * corrupt or otherwise interfere with a new kernel being started with kexec.
- */
-void ahci_platform_shutdown(struct platform_device *pdev)
-{
-	struct ata_host *host = platform_get_drvdata(pdev);
-	struct ahci_host_priv *hpriv = host->private_data;
-	void __iomem *mmio = hpriv->mmio;
-	int i;
-
-	for (i = 0; i < host->n_ports; i++) {
-		struct ata_port *ap = host->ports[i];
-
-		/* Disable port interrupts */
-		if (ap->ops->freeze)
-			ap->ops->freeze(ap);
-
-		/* Stop the port DMA engines */
-		if (ap->ops->port_stop)
-			ap->ops->port_stop(ap);
-	}
-
-	/* Disable and clear host interrupts */
-	writel(readl(mmio + HOST_CTL) & ~HOST_IRQ_EN, mmio + HOST_CTL);
-	readl(mmio + HOST_CTL); /* flush */
-	writel(GENMASK(host->n_ports, 0), mmio + HOST_IRQ_STAT);
-}
-EXPORT_SYMBOL_GPL(ahci_platform_shutdown);
 
 #ifdef CONFIG_PM_SLEEP
 /**

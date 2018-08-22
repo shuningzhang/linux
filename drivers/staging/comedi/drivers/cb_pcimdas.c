@@ -1,10 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * comedi/drivers/cb_pcimdas.c
  * Comedi driver for Computer Boards PCIM-DAS1602/16 and PCIe-DAS1602/16
  *
  * COMEDI - Linux Control and Measurement Device Interface
  * Copyright (C) 2000 David A. Schleef <ds@schleef.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 /*
@@ -132,13 +141,11 @@ static const struct comedi_lrange cb_pcimdas_ai_uni_range = {
  * jumper-settable on the board. The settings are not software-readable.
  */
 static const struct comedi_lrange cb_pcimdas_ao_range = {
-	6, {
+	4, {
 		BIP_RANGE(10),
 		BIP_RANGE(5),
 		UNI_RANGE(10),
-		UNI_RANGE(5),
-		RANGE_ext(-1, 1),
-		RANGE_ext(0, 1)
+		UNI_RANGE(5)
 	}
 };
 

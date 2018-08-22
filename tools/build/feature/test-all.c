@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * test-all.c: Try to build all the main testcases at once.
  *
@@ -42,20 +41,8 @@
 # include "test-dwarf.c"
 #undef main
 
-#define main main_test_dwarf_getlocations
-# include "test-dwarf_getlocations.c"
-#undef main
-
 #define main main_test_libelf_getphdrnum
 # include "test-libelf-getphdrnum.c"
-#undef main
-
-#define main main_test_libelf_gelf_getnote
-# include "test-libelf-gelf_getnote.c"
-#undef main
-
-#define main main_test_libelf_getshdrstrndx
-# include "test-libelf-getshdrstrndx.c"
 #undef main
 
 #define main main_test_libunwind
@@ -90,10 +77,6 @@
 # include "test-libnuma.c"
 #undef main
 
-#define main main_test_numa_num_possible_cpus
-# include "test-numa_num_possible_cpus.c"
-#undef main
-
 #define main main_test_timerfd
 # include "test-timerfd.c"
 #undef main
@@ -118,14 +101,6 @@
 # include "test-pthread-attr-setaffinity-np.c"
 #undef main
 
-#define main main_test_pthread_barrier
-# include "test-pthread-barrier.c"
-#undef main
-
-#define main main_test_sched_getcpu
-# include "test-sched_getcpu.c"
-#undef main
-
 # if 0
 /*
  * Disable libbabeltrace check for test-all, because the requested
@@ -142,30 +117,6 @@
 # include "test-lzma.c"
 #undef main
 
-#define main main_test_get_cpuid
-# include "test-get_cpuid.c"
-#undef main
-
-#define main main_test_bpf
-# include "test-bpf.c"
-#undef main
-
-#define main main_test_libcrypto
-# include "test-libcrypto.c"
-#undef main
-
-#define main main_test_sdt
-# include "test-sdt.c"
-#undef main
-
-#define main main_test_setns
-# include "test-setns.c"
-#undef main
-
-#define main main_test_libopencsd
-# include "test-libopencsd.c"
-#undef main
-
 int main(int argc, char *argv[])
 {
 	main_test_libpython();
@@ -176,10 +127,7 @@ int main(int argc, char *argv[])
 	main_test_libelf_mmap();
 	main_test_glibc();
 	main_test_dwarf();
-	main_test_dwarf_getlocations();
 	main_test_libelf_getphdrnum();
-	main_test_libelf_gelf_getnote();
-	main_test_libelf_getshdrstrndx();
 	main_test_libunwind();
 	main_test_libaudit();
 	main_test_libslang();
@@ -188,22 +136,13 @@ int main(int argc, char *argv[])
 	main_test_libbfd();
 	main_test_backtrace();
 	main_test_libnuma();
-	main_test_numa_num_possible_cpus();
 	main_test_timerfd();
 	main_test_stackprotector_all();
 	main_test_libdw_dwarf_unwind();
 	main_test_sync_compare_and_swap(argc, argv);
 	main_test_zlib();
 	main_test_pthread_attr_setaffinity_np();
-	main_test_pthread_barrier();
 	main_test_lzma();
-	main_test_get_cpuid();
-	main_test_bpf();
-	main_test_libcrypto();
-	main_test_sched_getcpu();
-	main_test_sdt();
-	main_test_setns();
-	main_test_libopencsd();
 
 	return 0;
 }

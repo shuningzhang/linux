@@ -25,7 +25,6 @@
 #include <errno.h>
 
 #include "../perf.h"
-#include "debug.h"
 #include "util.h"
 #include "trace-event.h"
 
@@ -87,18 +86,19 @@ struct scripting_ops python_scripting_unsupported_ops = {
 
 static void register_python_scripting(struct scripting_ops *scripting_ops)
 {
-	if (scripting_context == NULL)
-		scripting_context = malloc(sizeof(*scripting_context));
+	int err;
+	err = script_spec_register("Python", scripting_ops);
+	if (err)
+		die("error registering Python script extension");
 
-       if (scripting_context == NULL ||
-	   script_spec_register("Python", scripting_ops) ||
-	   script_spec_register("py", scripting_ops)) {
-		pr_err("Error registering Python script extension: disabling it\n");
-		zfree(&scripting_context);
-	}
+	err = script_spec_register("py", scripting_ops);
+	if (err)
+		die("error registering py script extension");
+
+	scripting_context = malloc(sizeof(struct scripting_context));
 }
 
-#ifndef HAVE_LIBPYTHON_SUPPORT
+#ifdef NO_LIBPYTHON
 void setup_python_scripting(void)
 {
 	register_python_scripting(&python_scripting_unsupported_ops);
@@ -150,18 +150,19 @@ struct scripting_ops perl_scripting_unsupported_ops = {
 
 static void register_perl_scripting(struct scripting_ops *scripting_ops)
 {
-	if (scripting_context == NULL)
-		scripting_context = malloc(sizeof(*scripting_context));
+	int err;
+	err = script_spec_register("Perl", scripting_ops);
+	if (err)
+		die("error registering Perl script extension");
 
-       if (scripting_context == NULL ||
-	   script_spec_register("Perl", scripting_ops) ||
-	   script_spec_register("pl", scripting_ops)) {
-		pr_err("Error registering Perl script extension: disabling it\n");
-		zfree(&scripting_context);
-	}
+	err = script_spec_register("pl", scripting_ops);
+	if (err)
+		die("error registering pl script extension");
+
+	scripting_context = malloc(sizeof(struct scripting_context));
 }
 
-#ifndef HAVE_LIBPERL_SUPPORT
+#ifdef NO_LIBPERL
 void setup_perl_scripting(void)
 {
 	register_perl_scripting(&perl_scripting_unsupported_ops);

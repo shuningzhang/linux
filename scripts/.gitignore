@@ -7,9 +7,6 @@ pnmtologo
 unifdef
 ihex2fw
 recordmcount
-check-lc_ctype
+docproc
 sortextable
 asn1_compiler
-extract-cert
-sign-file
-insert-sys-cert

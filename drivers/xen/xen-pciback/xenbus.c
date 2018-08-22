@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * PCI Backend Xenbus Setup - handles setup with frontend and xend
  *
@@ -7,7 +6,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/vmalloc.h>
@@ -18,6 +17,7 @@
 #include "pciback.h"
 
 #define INVALID_EVTCHN_IRQ  (-1)
+struct workqueue_struct *xen_pcibk_wq;
 
 static bool __read_mostly passthrough;
 module_param(passthrough, bool, S_IRUGO);
@@ -44,6 +44,7 @@ static struct xen_pcibk_device *alloc_pdev(struct xenbus_device *xdev)
 	dev_dbg(&xdev->dev, "allocated pdev @ 0x%p\n", pdev);
 
 	pdev->xdev = xdev;
+	dev_set_drvdata(&xdev->dev, pdev);
 
 	mutex_init(&pdev->dev_lock);
 
@@ -57,9 +58,6 @@ static struct xen_pcibk_device *alloc_pdev(struct xenbus_device *xdev)
 		kfree(pdev);
 		pdev = NULL;
 	}
-
-	dev_set_drvdata(&xdev->dev, pdev);
-
 out:
 	return pdev;
 }
@@ -76,7 +74,8 @@ static void xen_pcibk_disconnect(struct xen_pcibk_device *pdev)
 	/* If the driver domain started an op, make sure we complete it
 	 * before releasing the shared memory */
 
-	flush_work(&pdev->op_work);
+	/* Note, the workqueue does not use spinlocks at all.*/
+	flush_workqueue(xen_pcibk_wq);
 
 	if (pdev->sh_info != NULL) {
 		xenbus_unmap_ring_vfree(pdev->xdev, pdev->sh_info);
@@ -363,7 +362,7 @@ static int xen_pcibk_reconfigure(struct xen_pcibk_device *pdev)
 	int err = 0;
 	int num_devs;
 	int domain, bus, slot, func;
-	unsigned int substate;
+	int substate;
 	int i, len;
 	char state_str[64];
 	char dev_str[64];
@@ -396,8 +395,10 @@ static int xen_pcibk_reconfigure(struct xen_pcibk_device *pdev)
 					 "configuration");
 			goto out;
 		}
-		substate = xenbus_read_unsigned(pdev->xdev->nodename, state_str,
-						XenbusStateUnknown);
+		err = xenbus_scanf(XBT_NIL, pdev->xdev->nodename, state_str,
+				   "%d", &substate);
+		if (err != 1)
+			substate = XenbusStateUnknown;
 
 		switch (substate) {
 		case XenbusStateInitialising:
@@ -653,7 +654,7 @@ out:
 }
 
 static void xen_pcibk_be_watch(struct xenbus_watch *watch,
-			       const char *path, const char *token)
+			     const char **vec, unsigned int len)
 {
 	struct xen_pcibk_device *pdev =
 	    container_of(watch, struct xen_pcibk_device, be_watch);
@@ -730,6 +731,11 @@ const struct xen_pcibk_backend *__read_mostly xen_pcibk_backend;
 
 int __init xen_pcibk_xenbus_register(void)
 {
+	xen_pcibk_wq = create_workqueue("xen_pciback_workqueue");
+	if (!xen_pcibk_wq) {
+		pr_err("%s: create xen_pciback_workqueue failed\n", __func__);
+		return -EFAULT;
+	}
 	xen_pcibk_backend = &xen_pcibk_vpci_backend;
 	if (passthrough)
 		xen_pcibk_backend = &xen_pcibk_passthrough_backend;
@@ -739,5 +745,6 @@ int __init xen_pcibk_xenbus_register(void)
 
 void __exit xen_pcibk_xenbus_unregister(void)
 {
+	destroy_workqueue(xen_pcibk_wq);
 	xenbus_unregister_driver(&xen_pcibk_driver);
 }

@@ -714,8 +714,7 @@ out:
 	return ret;
 }
 
-static int dn_nsp_rx_packet(struct net *net, struct sock *sk2,
-			    struct sk_buff *skb)
+static int dn_nsp_rx_packet(struct sock *sk2, struct sk_buff *skb)
 {
 	struct dn_skb_cb *cb = DN_SKB_CB(skb);
 	struct sock *sk = NULL;
@@ -776,8 +775,12 @@ static int dn_nsp_rx_packet(struct net *net, struct sock *sk2,
 	 * Swap src & dst and look up in the normal way.
 	 */
 	if (unlikely(cb->rt_flags & DN_RT_F_RTS)) {
-		swap(cb->dst_port, cb->src_port);
-		swap(cb->dst, cb->src);
+		__le16 tmp = cb->dst_port;
+		cb->dst_port = cb->src_port;
+		cb->src_port = tmp;
+		tmp = cb->dst;
+		cb->dst = cb->src;
+		cb->src = tmp;
 	}
 
 	/*
@@ -811,8 +814,8 @@ free_out:
 
 int dn_nsp_rx(struct sk_buff *skb)
 {
-	return NF_HOOK(NFPROTO_DECNET, NF_DN_LOCAL_IN,
-		       &init_net, NULL, skb, skb->dev, NULL,
+	return NF_HOOK(NFPROTO_DECNET, NF_DN_LOCAL_IN, NULL, skb,
+		       skb->dev, NULL,
 		       dn_nsp_rx_packet);
 }
 

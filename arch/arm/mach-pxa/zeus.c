@@ -13,7 +13,6 @@
 
 #include <linux/cpufreq.h>
 #include <linux/interrupt.h>
-#include <linux/leds.h>
 #include <linux/irq.h>
 #include <linux/pm.h>
 #include <linux/gpio.h>
@@ -26,7 +25,7 @@
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
 #include <linux/i2c.h>
-#include <linux/platform_data/i2c-pxa.h>
+#include <linux/i2c/pxa-i2c.h>
 #include <linux/platform_data/pca953x.h>
 #include <linux/apm-emulation.h>
 #include <linux/can/platform/mcp251x.h>
@@ -39,18 +38,17 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include "pxa27x.h"
-#include "devices.h"
+#include <mach/pxa27x.h>
 #include <mach/regs-uart.h>
 #include <linux/platform_data/usb-ohci-pxa27x.h>
 #include <linux/platform_data/mmc-pxamci.h>
-#include "pxa27x-udc.h"
-#include "udc.h"
+#include <mach/pxa27x-udc.h>
+#include <mach/udc.h>
 #include <linux/platform_data/video-pxafb.h>
-#include "pm.h"
+#include <mach/pm.h>
 #include <mach/audio.h>
 #include <linux/platform_data/pcmcia-pxa2xx_viper.h>
-#include "zeus.h"
+#include <mach/zeus.h>
 #include <mach/smemc.h>
 
 #include "generic.h"
@@ -107,9 +105,8 @@ static inline unsigned long zeus_irq_pending(void)
 	return __raw_readw(ZEUS_CPLD_ISA_IRQ) & zeus_irq_enabled_mask;
 }
 
-static void zeus_irq_handler(struct irq_desc *desc)
+static void zeus_irq_handler(unsigned int irq, struct irq_desc *desc)
 {
-	unsigned int irq;
 	unsigned long pending;
 
 	pending = zeus_irq_pending();
@@ -154,7 +151,7 @@ static void __init zeus_init_irq(void)
 		isa_irq = zeus_bit_to_irq(level);
 		irq_set_chip_and_handler(isa_irq, &zeus_irq_chip,
 					 handle_edge_irq);
-		irq_clear_status_flags(isa_irq, IRQ_NOREQUEST | IRQ_NOPROBE);
+		set_irq_flags(isa_irq, IRQF_VALID | IRQF_PROBE);
 	}
 
 	irq_set_irq_type(gpio_to_irq(ZEUS_ISA_GPIO), IRQ_TYPE_EDGE_RISING);
@@ -912,7 +909,7 @@ static void __init zeus_map_io(void)
 	PMCR = PSPR = 0;
 
 	/* enable internal 32.768Khz oscillator (ignore OSCC_OOK) */
-	writel(readl(OSCC) | OSCC_OON, OSCC);
+	OSCC |= OSCC_OON;
 
 	/* Some clock cycles later (from OSCC_ON), programme PCFR (OPDE...).
 	 * float chip selects and PCMCIA */

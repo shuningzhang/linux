@@ -24,7 +24,6 @@
 #include <linux/time.h>
 #include <linux/string.h>
 #include <linux/module.h>
-#include <linux/compat.h>
 #include <sound/core.h>
 #include <sound/minors.h>
 #include <sound/control.h>
@@ -395,16 +394,10 @@ int snd_mixer_oss_ioctl_card(struct snd_card *card, unsigned int cmd, unsigned l
 	fmixer.mixer = card->mixer_oss;
 	return snd_mixer_oss_ioctl1(&fmixer, cmd, arg);
 }
-EXPORT_SYMBOL(snd_mixer_oss_ioctl_card);
 
 #ifdef CONFIG_COMPAT
 /* all compatible */
-static long snd_mixer_oss_ioctl_compat(struct file *file, unsigned int cmd,
-				       unsigned long arg)
-{
-	return snd_mixer_oss_ioctl1(file->private_data, cmd,
-				    (unsigned long)compat_ptr(arg));
-}
+#define snd_mixer_oss_ioctl_compat	snd_mixer_oss_ioctl
 #else
 #define snd_mixer_oss_ioctl_compat	NULL
 #endif
@@ -1118,7 +1111,7 @@ static int snd_mixer_oss_build_input(struct snd_mixer_oss *mixer, struct snd_mix
 	return 0;
 }
 
-#ifdef CONFIG_SND_PROC_FS
+#ifdef CONFIG_PROC_FS
 /*
  */
 #define MIXER_VOL(name) [SOUND_MIXER_##name] = #name
@@ -1184,8 +1177,7 @@ static void snd_mixer_oss_proc_write(struct snd_info_entry *entry,
 	struct snd_mixer_oss *mixer = entry->private_data;
 	char line[128], str[32], idxstr[16];
 	const char *cptr;
-	unsigned int idx;
-	int ch;
+	int ch, idx;
 	struct snd_mixer_oss_assign_table *tbl;
 	struct slot *slot;
 
@@ -1247,7 +1239,7 @@ static void snd_mixer_oss_proc_init(struct snd_mixer_oss *mixer)
 	if (! entry)
 		return;
 	entry->content = SNDRV_INFO_CONTENT_TEXT;
-	entry->mode = S_IFREG | 0644;
+	entry->mode = S_IFREG | S_IRUGO | S_IWUSR;
 	entry->c.text.read = snd_mixer_oss_proc_read;
 	entry->c.text.write = snd_mixer_oss_proc_write;
 	entry->private_data = mixer;
@@ -1263,10 +1255,10 @@ static void snd_mixer_oss_proc_done(struct snd_mixer_oss *mixer)
 	snd_info_free_entry(mixer->proc_entry);
 	mixer->proc_entry = NULL;
 }
-#else /* !CONFIG_SND_PROC_FS */
+#else /* !CONFIG_PROC_FS */
 #define snd_mixer_oss_proc_init(mix)
 #define snd_mixer_oss_proc_done(mix)
-#endif /* CONFIG_SND_PROC_FS */
+#endif /* CONFIG_PROC_FS */
 
 static void snd_mixer_oss_build(struct snd_mixer_oss *mixer)
 {
@@ -1426,3 +1418,5 @@ static void __exit alsa_mixer_oss_exit(void)
 
 module_init(alsa_mixer_oss_init)
 module_exit(alsa_mixer_oss_exit)
+
+EXPORT_SYMBOL(snd_mixer_oss_ioctl_card);

@@ -108,12 +108,13 @@ static int map_gicc_mpidr(struct acpi_subtable_header *entry,
 	return -EINVAL;
 }
 
-static phys_cpuid_t map_madt_entry(struct acpi_table_madt *madt,
-				   int type, u32 acpi_id)
+static phys_cpuid_t map_madt_entry(int type, u32 acpi_id)
 {
 	unsigned long madt_end, entry;
 	phys_cpuid_t phys_id = PHYS_CPUID_INVALID;	/* CPU hardware ID */
+	struct acpi_table_madt *madt;
 
+	madt = get_madt_table();
 	if (!madt)
 		return phys_id;
 
@@ -142,23 +143,6 @@ static phys_cpuid_t map_madt_entry(struct acpi_table_madt *madt,
 		entry += header->length;
 	}
 	return phys_id;
-}
-
-phys_cpuid_t __init acpi_map_madt_entry(u32 acpi_id)
-{
-	struct acpi_table_madt *madt = NULL;
-	phys_cpuid_t rv;
-
-	acpi_get_table(ACPI_SIG_MADT, 0,
-		       (struct acpi_table_header **)&madt);
-	if (!madt)
-		return PHYS_CPUID_INVALID;
-
-	rv = map_madt_entry(madt, 1, acpi_id);
-
-	acpi_put_table((struct acpi_table_header *)madt);
-
-	return rv;
 }
 
 static phys_cpuid_t map_mat_entry(acpi_handle handle, int type, u32 acpi_id)
@@ -200,8 +184,8 @@ phys_cpuid_t acpi_get_phys_id(acpi_handle handle, int type, u32 acpi_id)
 	phys_cpuid_t phys_id;
 
 	phys_id = map_mat_entry(handle, type, acpi_id);
-	if (invalid_phys_cpuid(phys_id))
-		phys_id = map_madt_entry(get_madt_table(), type, acpi_id);
+	if (phys_id == PHYS_CPUID_INVALID)
+		phys_id = map_madt_entry(type, acpi_id);
 
 	return phys_id;
 }
@@ -212,7 +196,7 @@ int acpi_map_cpuid(phys_cpuid_t phys_id, u32 acpi_id)
 	int i;
 #endif
 
-	if (invalid_phys_cpuid(phys_id)) {
+	if (phys_id == PHYS_CPUID_INVALID) {
 		/*
 		 * On UP processor, there is no _MAT or MADT table.
 		 * So above phys_id is always set to PHYS_CPUID_INVALID.
@@ -231,12 +215,12 @@ int acpi_map_cpuid(phys_cpuid_t phys_id, u32 acpi_id)
 		 * Ignores phys_id and always returns 0 for the processor
 		 * handle with acpi id 0 if nr_cpu_ids is 1.
 		 * This should be the case if SMP tables are not found.
-		 * Return -EINVAL for other CPU's handle.
+		 * Return -1 for other CPU's handle.
 		 */
 		if (nr_cpu_ids <= 1 && acpi_id == 0)
 			return acpi_id;
 		else
-			return -EINVAL;
+			return -1;
 	}
 
 #ifdef CONFIG_SMP
@@ -249,7 +233,7 @@ int acpi_map_cpuid(phys_cpuid_t phys_id, u32 acpi_id)
 	if (phys_id == 0)
 		return phys_id;
 #endif
-	return -ENODEV;
+	return -1;
 }
 
 int acpi_get_cpuid(acpi_handle handle, int type, u32 acpi_id)

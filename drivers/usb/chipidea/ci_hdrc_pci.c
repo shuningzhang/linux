@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * ci_hdrc_pci.c - MIPS USB IP core family device controller
  *
  * Copyright (C) 2008 Chipidea - MIPS Technologies, Inc. All rights reserved.
  *
  * Author: David Lopo
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/platform_device.h>
@@ -82,8 +85,8 @@ static int ci_hdrc_pci_probe(struct pci_dev *pdev,
 
 	/* register a nop PHY */
 	ci->phy = usb_phy_generic_register();
-	if (IS_ERR(ci->phy))
-		return PTR_ERR(ci->phy);
+	if (!ci->phy)
+		return -ENOMEM;
 
 	memset(res, 0, sizeof(res));
 	res[0].start	= pci_resource_start(pdev, 0);
@@ -139,16 +142,16 @@ static const struct pci_device_id ci_hdrc_pci_id_table[] = {
 		.driver_data = (kernel_ulong_t)&pci_platdata,
 	},
 	{
-		PCI_VDEVICE(INTEL, 0x0811),
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0811),
 		.driver_data = (kernel_ulong_t)&langwell_pci_platdata,
 	},
 	{
-		PCI_VDEVICE(INTEL, 0x0829),
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0829),
 		.driver_data = (kernel_ulong_t)&penwell_pci_platdata,
 	},
 	{
 		/* Intel Clovertrail */
-		PCI_VDEVICE(INTEL, 0xe006),
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xe006),
 		.driver_data = (kernel_ulong_t)&penwell_pci_platdata,
 	},
 	{ 0 } /* end: all zeroes */
@@ -167,4 +170,5 @@ module_pci_driver(ci_hdrc_pci_driver);
 MODULE_AUTHOR("MIPS - David Lopo <dlopo@chipidea.mips.com>");
 MODULE_DESCRIPTION("MIPS CI13XXX USB Peripheral Controller");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("June 2008");
 MODULE_ALIAS("platform:ci13xxx_pci");

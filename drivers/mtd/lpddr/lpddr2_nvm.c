@@ -380,8 +380,14 @@ out:
  */
 static int lpddr2_nvm_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
-	return lpddr2_nvm_do_block_op(mtd, instr->addr, instr->len,
-				      LPDDR2_NVM_ERASE);
+	int ret = lpddr2_nvm_do_block_op(mtd, instr->addr, instr->len,
+		LPDDR2_NVM_ERASE);
+	if (!ret) {
+		instr->state = MTD_ERASE_DONE;
+		mtd_erase_callback(instr);
+	}
+
+	return ret;
 }
 
 /*
@@ -454,7 +460,6 @@ static int lpddr2_nvm_probe(struct platform_device *pdev)
 
 	/* Populate mtd_info data structure */
 	*mtd = (struct mtd_info) {
-		.dev		= { .parent = &pdev->dev },
 		.name		= pdev->dev.init_name,
 		.type		= MTD_RAM,
 		.priv		= map,

@@ -32,7 +32,7 @@
 #
 # Authors: Paul E. McKenney <paulmck@linux.vnet.ibm.com>
 
-T=${TMPDIR-/tmp}/configinit.sh.$$
+T=/tmp/configinit.sh.$$
 trap 'rm -rf $T' 0
 mkdir $T
 
@@ -51,7 +51,7 @@ then
 			mkdir $builddir
 		fi
 	else
-		echo Bad build directory: \"$buildloc\"
+		echo Bad build directory: \"$builddir\"
 		exit 2
 	fi
 fi
@@ -66,7 +66,7 @@ make $buildloc $TORTURE_DEFCONFIG > $builddir/Make.defconfig.out 2>&1
 mv $builddir/.config $builddir/.config.sav
 sh $T/upd.sh < $builddir/.config.sav > $builddir/.config
 cp $builddir/.config $builddir/.config.new
-yes '' | make $buildloc oldconfig > $builddir/Make.oldconfig.out 2> $builddir/Make.oldconfig.err
+yes '' | make $buildloc oldconfig > $builddir/Make.modconfig.out 2>&1
 
 # verify new config matches specification.
 configcheck.sh $builddir/.config $c

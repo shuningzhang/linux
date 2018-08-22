@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_MIPS_KDEBUG_H
 #define _ASM_MIPS_KDEBUG_H
 
@@ -12,9 +11,7 @@ enum die_val {
 	DIE_PAGE_FAULT,
 	DIE_BREAK,
 	DIE_SSTEPBP,
-	DIE_MSAFP,
-	DIE_UPROBE,
-	DIE_UPROBE_XOL,
+	DIE_MSAFP
 };
 
 #endif /* _ASM_MIPS_KDEBUG_H */

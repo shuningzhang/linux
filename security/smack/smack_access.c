@@ -36,6 +36,11 @@ struct smack_known smack_known_floor = {
 	.smk_secid	= 5,
 };
 
+struct smack_known smack_known_invalid = {
+	.smk_known	= "",
+	.smk_secid	= 6,
+};
+
 struct smack_known smack_known_web = {
 	.smk_known	= "@",
 	.smk_secid	= 7,
@@ -408,7 +413,7 @@ void smk_insert_entry(struct smack_known *skp)
 	unsigned int hash;
 	struct hlist_head *head;
 
-	hash = full_name_hash(NULL, skp->smk_known, strlen(skp->smk_known));
+	hash = full_name_hash(skp->smk_known, strlen(skp->smk_known));
 	head = &smack_known_hash[hash & (SMACK_HASH_SLOTS - 1)];
 
 	hlist_add_head_rcu(&skp->smk_hashed, head);
@@ -420,7 +425,7 @@ void smk_insert_entry(struct smack_known *skp)
  * @string: a text string that might be a Smack label
  *
  * Returns a pointer to the entry in the label list that
- * matches the passed string or NULL if not found.
+ * matches the passed string.
  */
 struct smack_known *smk_find_entry(const char *string)
 {
@@ -428,7 +433,7 @@ struct smack_known *smk_find_entry(const char *string)
 	struct hlist_head *head;
 	struct smack_known *skp;
 
-	hash = full_name_hash(NULL, string, strlen(string));
+	hash = full_name_hash(string, strlen(string));
 	head = &smack_known_hash[hash & (SMACK_HASH_SLOTS - 1)];
 
 	hlist_for_each_entry_rcu(skp, head, smk_hashed)
@@ -443,7 +448,7 @@ struct smack_known *smk_find_entry(const char *string)
  * @string: a text string that might contain a Smack label
  * @len: the maximum size, or zero if it is NULL terminated.
  *
- * Returns a pointer to the clean label or an error code.
+ * Returns a pointer to the clean label, or NULL
  */
 char *smk_parse_smack(const char *string, int len)
 {
@@ -459,7 +464,7 @@ char *smk_parse_smack(const char *string, int len)
 	 * including /smack/cipso and /smack/cipso2
 	 */
 	if (string[0] == '-')
-		return ERR_PTR(-EINVAL);
+		return NULL;
 
 	for (i = 0; i < len; i++)
 		if (string[i] > '~' || string[i] <= ' ' || string[i] == '/' ||
@@ -467,13 +472,11 @@ char *smk_parse_smack(const char *string, int len)
 			break;
 
 	if (i == 0 || i >= SMK_LONGLABEL)
-		return ERR_PTR(-EINVAL);
+		return NULL;
 
 	smack = kzalloc(i + 1, GFP_KERNEL);
-	if (smack == NULL)
-		return ERR_PTR(-ENOMEM);
-
-	strncpy(smack, string, i);
+	if (smack != NULL)
+		strncpy(smack, string, i);
 
 	return smack;
 }
@@ -504,7 +507,7 @@ int smk_netlbl_mls(int level, char *catset, struct netlbl_lsm_secattr *sap,
 			if ((m & *cp) == 0)
 				continue;
 			rc = netlbl_catmap_setbit(&sap->attr.mls.cat,
-						  cat, GFP_KERNEL);
+						  cat, GFP_ATOMIC);
 			if (rc < 0) {
 				netlbl_catmap_free(sap->attr.mls.cat);
 				return rc;
@@ -520,8 +523,7 @@ int smk_netlbl_mls(int level, char *catset, struct netlbl_lsm_secattr *sap,
  * @len: the maximum size, or zero if it is NULL terminated.
  *
  * Returns a pointer to the entry in the label list that
- * matches the passed string, adding it if necessary,
- * or an error code.
+ * matches the passed string, adding it if necessary.
  */
 struct smack_known *smk_import_entry(const char *string, int len)
 {
@@ -531,8 +533,8 @@ struct smack_known *smk_import_entry(const char *string, int len)
 	int rc;
 
 	smack = smk_parse_smack(string, len);
-	if (IS_ERR(smack))
-		return ERR_CAST(smack);
+	if (smack == NULL)
+		return NULL;
 
 	mutex_lock(&smack_known_lock);
 
@@ -541,10 +543,8 @@ struct smack_known *smk_import_entry(const char *string, int len)
 		goto freeout;
 
 	skp = kzalloc(sizeof(*skp), GFP_KERNEL);
-	if (skp == NULL) {
-		skp = ERR_PTR(-ENOMEM);
+	if (skp == NULL)
 		goto freeout;
-	}
 
 	skp->smk_known = smack;
 	skp->smk_secid = smack_next_secid++;
@@ -577,7 +577,7 @@ struct smack_known *smk_import_entry(const char *string, int len)
 	 * smk_netlbl_mls failed.
 	 */
 	kfree(skp);
-	skp = ERR_PTR(rc);
+	skp = NULL;
 freeout:
 	kfree(smack);
 unlockout:
@@ -610,73 +610,5 @@ struct smack_known *smack_from_secid(const u32 secid)
 	 * of a secid that is not on the list.
 	 */
 	rcu_read_unlock();
-	return &smack_known_huh;
-}
-
-/*
- * Unless a process is running with one of these labels
- * even having CAP_MAC_OVERRIDE isn't enough to grant
- * privilege to violate MAC policy. If no labels are
- * designated (the empty list case) capabilities apply to
- * everyone.
- */
-LIST_HEAD(smack_onlycap_list);
-DEFINE_MUTEX(smack_onlycap_lock);
-
-/**
- * smack_privileged_cred - are all privilege requirements met by cred
- * @cap: The requested capability
- * @cred: the credential to use
- *
- * Is the task privileged and allowed to be privileged
- * by the onlycap rule.
- *
- * Returns true if the task is allowed to be privileged, false if it's not.
- */
-bool smack_privileged_cred(int cap, const struct cred *cred)
-{
-	struct task_smack *tsp = cred->security;
-	struct smack_known *skp = tsp->smk_task;
-	struct smack_known_list_elem *sklep;
-	int rc;
-
-	rc = cap_capable(cred, &init_user_ns, cap, SECURITY_CAP_AUDIT);
-	if (rc)
-		return false;
-
-	rcu_read_lock();
-	if (list_empty(&smack_onlycap_list)) {
-		rcu_read_unlock();
-		return true;
-	}
-
-	list_for_each_entry_rcu(sklep, &smack_onlycap_list, list) {
-		if (sklep->smk_label == skp) {
-			rcu_read_unlock();
-			return true;
-		}
-	}
-	rcu_read_unlock();
-
-	return false;
-}
-
-/**
- * smack_privileged - are all privilege requirements met
- * @cap: The requested capability
- *
- * Is the task privileged and allowed to be privileged
- * by the onlycap rule.
- *
- * Returns true if the task is allowed to be privileged, false if it's not.
- */
-bool smack_privileged(int cap)
-{
-	/*
-	 * All kernel tasks are privileged
-	 */
-	if (unlikely(current->flags & PF_KTHREAD))
-		return true;
-
-	return smack_privileged_cred(cap, current_cred());
+	return &smack_known_invalid;
 }

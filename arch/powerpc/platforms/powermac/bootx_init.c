@@ -84,7 +84,6 @@ static void __init bootx_printf(const char *format, ...)
 			break;
 		}
 	}
-	va_end(args);
 }
 #else /* CONFIG_BOOTX_TEXT */
 static void __init bootx_printf(const char *format, ...) {}
@@ -468,7 +467,7 @@ void __init bootx_init(unsigned long r3, unsigned long r4)
 	boot_infos_t *bi = (boot_infos_t *) r4;
 	unsigned long hdr;
 	unsigned long space;
-	unsigned long ptr;
+	unsigned long ptr, x;
 	char *model;
 	unsigned long offset = reloc_offset();
 
@@ -519,7 +518,7 @@ void __init bootx_init(unsigned long r3, unsigned long r4)
 			;
 	}
 	if (bi->architecture != BOOT_ARCH_PCI) {
-		bootx_printf(" !!! WARNING - Unsupported machine"
+		bootx_printf(" !!! WARNING - Usupported machine"
 			     " architecture !\n");
 		for (;;)
 			;
@@ -562,8 +561,6 @@ void __init bootx_init(unsigned long r3, unsigned long r4)
 	 * MMU switched OFF, so this should not be useful anymore.
 	 */
 	if (bi->version < 4) {
-		unsigned long x __maybe_unused;
-
 		bootx_printf("Touching pages...\n");
 
 		/*

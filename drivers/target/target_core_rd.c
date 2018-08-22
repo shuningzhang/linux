@@ -26,15 +26,15 @@
 
 #include <linux/string.h>
 #include <linux/parser.h>
-#include <linux/highmem.h>
 #include <linux/timer.h>
-#include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
-#include <scsi/scsi_proto.h>
+#include <scsi/scsi.h>
+#include <scsi/scsi_host.h>
 
 #include <target/target_core_base.h>
 #include <target/target_core_backend.h>
+#include <target/target_core_backend_configfs.h>
 
 #include "target_core_rd.h"
 
@@ -43,13 +43,19 @@ static inline struct rd_dev *RD_DEV(struct se_device *dev)
 	return container_of(dev, struct rd_dev, dev);
 }
 
+/*	rd_attach_hba(): (Part of se_subsystem_api_t template)
+ *
+ *
+ */
 static int rd_attach_hba(struct se_hba *hba, u32 host_id)
 {
 	struct rd_host *rd_host;
 
-	rd_host = kzalloc(sizeof(*rd_host), GFP_KERNEL);
-	if (!rd_host)
+	rd_host = kzalloc(sizeof(struct rd_host), GFP_KERNEL);
+	if (!rd_host) {
+		pr_err("Unable to allocate memory for struct rd_host\n");
 		return -ENOMEM;
+	}
 
 	rd_host->rd_host_id = host_id;
 
@@ -57,7 +63,7 @@ static int rd_attach_hba(struct se_hba *hba, u32 host_id)
 
 	pr_debug("CORE_HBA[%d] - TCM Ramdisk HBA Driver %s on"
 		" Generic Target Core Stack %s\n", hba->hba_id,
-		RD_HBA_VERSION, TARGET_CORE_VERSION);
+		RD_HBA_VERSION, TARGET_CORE_MOD_VERSION);
 
 	return 0;
 }
@@ -138,23 +144,34 @@ static int rd_allocate_sgl_table(struct rd_dev *rd_dev, struct rd_dev_sg_table *
 		sg_per_table = (total_sg_needed > max_sg_per_table) ?
 			max_sg_per_table : total_sg_needed;
 
+#ifdef CONFIG_ARCH_HAS_SG_CHAIN
+
 		/*
 		 * Reserve extra element for chain entry
 		 */
 		if (sg_per_table < total_sg_needed)
 			chain_entry = 1;
 
+#endif /* CONFIG_ARCH_HAS_SG_CHAIN */
+
 		sg = kcalloc(sg_per_table + chain_entry, sizeof(*sg),
 				GFP_KERNEL);
-		if (!sg)
+		if (!sg) {
+			pr_err("Unable to allocate scatterlist array"
+				" for struct rd_dev\n");
 			return -ENOMEM;
+		}
 
 		sg_init_table(sg, sg_per_table + chain_entry);
+
+#ifdef CONFIG_ARCH_HAS_SG_CHAIN
 
 		if (i > 0) {
 			sg_chain(sg_table[i - 1].sg_table,
 				 max_sg_per_table + 1, sg);
 		}
+
+#endif /* CONFIG_ARCH_HAS_SG_CHAIN */
 
 		sg_table[i].sg_table = sg;
 		sg_table[i].rd_sg_count = sg_per_table;
@@ -205,9 +222,13 @@ static int rd_build_device_space(struct rd_dev *rd_dev)
 	total_sg_needed = rd_dev->rd_page_count;
 
 	sg_tables = (total_sg_needed / max_sg_per_table) + 1;
-	sg_table = kcalloc(sg_tables, sizeof(*sg_table), GFP_KERNEL);
-	if (!sg_table)
+
+	sg_table = kzalloc(sg_tables * sizeof(struct rd_dev_sg_table), GFP_KERNEL);
+	if (!sg_table) {
+		pr_err("Unable to allocate memory for Ramdisk"
+		       " scatterlist tables\n");
 		return -ENOMEM;
+	}
 
 	rd_dev->sg_table_array = sg_table;
 	rd_dev->sg_table_count = sg_tables;
@@ -262,9 +283,13 @@ static int rd_build_prot_space(struct rd_dev *rd_dev, int prot_length, int block
 	total_sg_needed = (rd_dev->rd_page_count * prot_length / block_size) + 1;
 
 	sg_tables = (total_sg_needed / max_sg_per_table) + 1;
-	sg_table = kcalloc(sg_tables, sizeof(*sg_table), GFP_KERNEL);
-	if (!sg_table)
+
+	sg_table = kzalloc(sg_tables * sizeof(struct rd_dev_sg_table), GFP_KERNEL);
+	if (!sg_table) {
+		pr_err("Unable to allocate memory for Ramdisk protection"
+		       " scatterlist tables\n");
 		return -ENOMEM;
+	}
 
 	rd_dev->sg_prot_array = sg_table;
 	rd_dev->sg_prot_count = sg_tables;
@@ -285,9 +310,11 @@ static struct se_device *rd_alloc_device(struct se_hba *hba, const char *name)
 	struct rd_dev *rd_dev;
 	struct rd_host *rd_host = hba->hba_ptr;
 
-	rd_dev = kzalloc(sizeof(*rd_dev), GFP_KERNEL);
-	if (!rd_dev)
+	rd_dev = kzalloc(sizeof(struct rd_dev), GFP_KERNEL);
+	if (!rd_dev) {
+		pr_err("Unable to allocate memory for struct rd_dev\n");
 		return NULL;
+	}
 
 	rd_dev->rd_host = rd_host;
 
@@ -312,7 +339,6 @@ static int rd_configure_device(struct se_device *dev)
 	dev->dev_attrib.hw_block_size = RD_BLOCKSIZE;
 	dev->dev_attrib.hw_max_sectors = UINT_MAX;
 	dev->dev_attrib.hw_queue_depth = RD_MAX_DEVICE_QUEUE_DEPTH;
-	dev->dev_attrib.is_nonrot = 1;
 
 	rd_dev->rd_dev_id = rd_host->rd_host_dev_id_count++;
 
@@ -329,24 +355,12 @@ fail:
 	return ret;
 }
 
-static void rd_dev_call_rcu(struct rcu_head *p)
-{
-	struct se_device *dev = container_of(p, struct se_device, rcu_head);
-	struct rd_dev *rd_dev = RD_DEV(dev);
-
-	kfree(rd_dev);
-}
-
 static void rd_free_device(struct se_device *dev)
-{
-	call_rcu(&dev->rcu_head, rd_dev_call_rcu);
-}
-
-static void rd_destroy_device(struct se_device *dev)
 {
 	struct rd_dev *rd_dev = RD_DEV(dev);
 
 	rd_release_device_space(rd_dev);
+	kfree(rd_dev);
 }
 
 static struct rd_dev_sg_table *rd_get_sg_table(struct rd_dev *rd_dev, u32 page)
@@ -389,17 +403,21 @@ static struct rd_dev_sg_table *rd_get_prot_table(struct rd_dev *rd_dev, u32 page
 	return NULL;
 }
 
-static sense_reason_t rd_do_prot_rw(struct se_cmd *cmd, bool is_read)
+typedef sense_reason_t (*dif_verify)(struct se_cmd *, sector_t, unsigned int,
+				     unsigned int, struct scatterlist *, int);
+
+static sense_reason_t rd_do_prot_rw(struct se_cmd *cmd, dif_verify dif_verify)
 {
 	struct se_device *se_dev = cmd->se_dev;
 	struct rd_dev *dev = RD_DEV(se_dev);
 	struct rd_dev_sg_table *prot_table;
+	bool need_to_release = false;
 	struct scatterlist *prot_sg;
 	u32 sectors = cmd->data_length / se_dev->dev_attrib.block_size;
 	u32 prot_offset, prot_page;
 	u32 prot_npages __maybe_unused;
 	u64 tmp;
-	sense_reason_t rc = 0;
+	sense_reason_t rc = TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
 
 	tmp = cmd->t_task_lba * se_dev->prot_length;
 	prot_offset = do_div(tmp, PAGE_SIZE);
@@ -412,16 +430,45 @@ static sense_reason_t rd_do_prot_rw(struct se_cmd *cmd, bool is_read)
 	prot_sg = &prot_table->sg_table[prot_page -
 					prot_table->page_start_offset];
 
-	if (se_dev->dev_attrib.pi_prot_verify) {
-		if (is_read)
-			rc = sbc_dif_verify(cmd, cmd->t_task_lba, sectors, 0,
-					    prot_sg, prot_offset);
-		else
-			rc = sbc_dif_verify(cmd, cmd->t_task_lba, sectors, 0,
-					    cmd->t_prot_sg, 0);
+#ifndef CONFIG_ARCH_HAS_SG_CHAIN
+
+	prot_npages = DIV_ROUND_UP(prot_offset + sectors * se_dev->prot_length,
+				   PAGE_SIZE);
+
+	/*
+	 * Allocate temporaly contiguous scatterlist entries if prot pages
+	 * straddles multiple scatterlist tables.
+	 */
+	if (prot_table->page_end_offset < prot_page + prot_npages - 1) {
+		int i;
+
+		prot_sg = kcalloc(prot_npages, sizeof(*prot_sg), GFP_KERNEL);
+		if (!prot_sg)
+			return TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
+
+		need_to_release = true;
+		sg_init_table(prot_sg, prot_npages);
+
+		for (i = 0; i < prot_npages; i++) {
+			if (prot_page + i > prot_table->page_end_offset) {
+				prot_table = rd_get_prot_table(dev,
+								prot_page + i);
+				if (!prot_table) {
+					kfree(prot_sg);
+					return rc;
+				}
+				sg_unmark_end(&prot_sg[i - 1]);
+			}
+			prot_sg[i] = prot_table->sg_table[prot_page + i -
+						prot_table->page_start_offset];
+		}
 	}
-	if (!rc)
-		sbc_dif_copy_prot(cmd, sectors, is_read, prot_sg, prot_offset);
+
+#endif /* !CONFIG_ARCH_HAS_SG_CHAIN */
+
+	rc = dif_verify(cmd, cmd->t_task_lba, sectors, 0, prot_sg, prot_offset);
+	if (need_to_release)
+		kfree(prot_sg);
 
 	return rc;
 }
@@ -465,7 +512,7 @@ rd_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 
 	if (cmd->prot_type && se_dev->dev_attrib.pi_prot_type &&
 	    data_direction == DMA_TO_DEVICE) {
-		rc = rd_do_prot_rw(cmd, false);
+		rc = rd_do_prot_rw(cmd, sbc_dif_verify_write);
 		if (rc)
 			return rc;
 	}
@@ -533,7 +580,7 @@ rd_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 
 	if (cmd->prot_type && se_dev->dev_attrib.pi_prot_type &&
 	    data_direction == DMA_FROM_DEVICE) {
-		rc = rd_do_prot_rw(cmd, true);
+		rc = rd_do_prot_rw(cmd, sbc_dif_verify_read);
 		if (rc)
 			return rc;
 	}
@@ -558,7 +605,7 @@ static ssize_t rd_set_configfs_dev_params(struct se_device *dev,
 	struct rd_dev *rd_dev = RD_DEV(dev);
 	char *orig, *ptr, *opts;
 	substring_t args[MAX_OPT_ARGS];
-	int arg, token;
+	int ret = 0, arg, token;
 
 	opts = kstrdup(page, GFP_KERNEL);
 	if (!opts)
@@ -593,7 +640,7 @@ static ssize_t rd_set_configfs_dev_params(struct se_device *dev,
 	}
 
 	kfree(orig);
-	return count;
+	return (!ret) ? count : ret;
 }
 
 static ssize_t rd_show_configfs_dev_params(struct se_device *dev, char *b)
@@ -647,7 +694,42 @@ rd_parse_cdb(struct se_cmd *cmd)
 	return sbc_parse_cdb(cmd, &rd_sbc_ops);
 }
 
-static const struct target_backend_ops rd_mcp_ops = {
+DEF_TB_DEFAULT_ATTRIBS(rd_mcp);
+
+static struct configfs_attribute *rd_mcp_backend_dev_attrs[] = {
+	&rd_mcp_dev_attrib_emulate_model_alias.attr,
+	&rd_mcp_dev_attrib_emulate_dpo.attr,
+	&rd_mcp_dev_attrib_emulate_fua_write.attr,
+	&rd_mcp_dev_attrib_emulate_fua_read.attr,
+	&rd_mcp_dev_attrib_emulate_write_cache.attr,
+	&rd_mcp_dev_attrib_emulate_ua_intlck_ctrl.attr,
+	&rd_mcp_dev_attrib_emulate_tas.attr,
+	&rd_mcp_dev_attrib_emulate_tpu.attr,
+	&rd_mcp_dev_attrib_emulate_tpws.attr,
+	&rd_mcp_dev_attrib_emulate_caw.attr,
+	&rd_mcp_dev_attrib_emulate_3pc.attr,
+	&rd_mcp_dev_attrib_pi_prot_type.attr,
+	&rd_mcp_dev_attrib_hw_pi_prot_type.attr,
+	&rd_mcp_dev_attrib_pi_prot_format.attr,
+	&rd_mcp_dev_attrib_enforce_pr_isids.attr,
+	&rd_mcp_dev_attrib_is_nonrot.attr,
+	&rd_mcp_dev_attrib_emulate_rest_reord.attr,
+	&rd_mcp_dev_attrib_force_pr_aptpl.attr,
+	&rd_mcp_dev_attrib_hw_block_size.attr,
+	&rd_mcp_dev_attrib_block_size.attr,
+	&rd_mcp_dev_attrib_hw_max_sectors.attr,
+	&rd_mcp_dev_attrib_optimal_sectors.attr,
+	&rd_mcp_dev_attrib_hw_queue_depth.attr,
+	&rd_mcp_dev_attrib_queue_depth.attr,
+	&rd_mcp_dev_attrib_max_unmap_lba_count.attr,
+	&rd_mcp_dev_attrib_max_unmap_block_desc_count.attr,
+	&rd_mcp_dev_attrib_unmap_granularity.attr,
+	&rd_mcp_dev_attrib_unmap_granularity_alignment.attr,
+	&rd_mcp_dev_attrib_max_write_same_len.attr,
+	NULL,
+};
+
+static struct se_subsystem_api rd_mcp_template = {
 	.name			= "rd_mcp",
 	.inquiry_prod		= "RAMDISK-MCP",
 	.inquiry_rev		= RD_MCP_VERSION,
@@ -655,7 +737,6 @@ static const struct target_backend_ops rd_mcp_ops = {
 	.detach_hba		= rd_detach_hba,
 	.alloc_device		= rd_alloc_device,
 	.configure_device	= rd_configure_device,
-	.destroy_device		= rd_destroy_device,
 	.free_device		= rd_free_device,
 	.parse_cdb		= rd_parse_cdb,
 	.set_configfs_dev_params = rd_set_configfs_dev_params,
@@ -664,15 +745,25 @@ static const struct target_backend_ops rd_mcp_ops = {
 	.get_blocks		= rd_get_blocks,
 	.init_prot		= rd_init_prot,
 	.free_prot		= rd_free_prot,
-	.tb_dev_attrib_attrs	= sbc_attrib_attrs,
 };
 
 int __init rd_module_init(void)
 {
-	return transport_backend_register(&rd_mcp_ops);
+	struct target_backend_cits *tbc = &rd_mcp_template.tb_cits;
+	int ret;
+
+	target_core_setup_sub_cits(&rd_mcp_template);
+	tbc->tb_dev_attrib_cit.ct_attrs = rd_mcp_backend_dev_attrs;
+
+	ret = transport_subsystem_register(&rd_mcp_template);
+	if (ret < 0) {
+		return ret;
+	}
+
+	return 0;
 }
 
 void rd_module_exit(void)
 {
-	target_backend_unregister(&rd_mcp_ops);
+	transport_subsystem_release(&rd_mcp_template);
 }

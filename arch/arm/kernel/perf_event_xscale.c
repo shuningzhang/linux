@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * ARMv5 [xscale] Performance counter handling code.
  *
@@ -14,14 +13,6 @@
  */
 
 #ifdef CONFIG_CPU_XSCALE
-
-#include <asm/cputype.h>
-#include <asm/irq_regs.h>
-
-#include <linux/of.h>
-#include <linux/perf/arm_pmu.h>
-#include <linux/platform_device.h>
-
 enum xscale_perf_types {
 	XSCALE_PERFCTR_ICACHE_MISS		= 0x00,
 	XSCALE_PERFCTR_ICACHE_NO_DELIVER	= 0x01,
@@ -142,10 +133,11 @@ xscale1_pmnc_counter_has_overflowed(unsigned long pmnc,
 }
 
 static irqreturn_t
-xscale1pmu_handle_irq(struct arm_pmu *cpu_pmu)
+xscale1pmu_handle_irq(int irq_num, void *dev)
 {
 	unsigned long pmnc;
 	struct perf_sample_data data;
+	struct arm_pmu *cpu_pmu = (struct arm_pmu *)dev;
 	struct pmu_hw_events *cpuc = this_cpu_ptr(cpu_pmu->hw_events);
 	struct pt_regs *regs;
 	int idx;
@@ -488,10 +480,11 @@ xscale2_pmnc_counter_has_overflowed(unsigned long of_flags,
 }
 
 static irqreturn_t
-xscale2pmu_handle_irq(struct arm_pmu *cpu_pmu)
+xscale2pmu_handle_irq(int irq_num, void *dev)
 {
 	unsigned long pmnc, of_flags;
 	struct perf_sample_data data;
+	struct arm_pmu *cpu_pmu = (struct arm_pmu *)dev;
 	struct pmu_hw_events *cpuc = this_cpu_ptr(cpu_pmu->hw_events);
 	struct pt_regs *regs;
 	int idx;
@@ -747,24 +740,14 @@ static int xscale2pmu_init(struct arm_pmu *cpu_pmu)
 
 	return 0;
 }
-
-static const struct pmu_probe_info xscale_pmu_probe_table[] = {
-	XSCALE_PMU_PROBE(ARM_CPU_XSCALE_ARCH_V1, xscale1pmu_init),
-	XSCALE_PMU_PROBE(ARM_CPU_XSCALE_ARCH_V2, xscale2pmu_init),
-	{ /* sentinel value */ }
-};
-
-static int xscale_pmu_device_probe(struct platform_device *pdev)
+#else
+static inline int xscale1pmu_init(struct arm_pmu *cpu_pmu)
 {
-	return arm_pmu_device_probe(pdev, NULL, xscale_pmu_probe_table);
+	return -ENODEV;
 }
 
-static struct platform_driver xscale_pmu_driver = {
-	.driver		= {
-		.name	= "xscale-pmu",
-	},
-	.probe		= xscale_pmu_device_probe,
-};
-
-builtin_platform_driver(xscale_pmu_driver);
+static inline int xscale2pmu_init(struct arm_pmu *cpu_pmu)
+{
+	return -ENODEV;
+}
 #endif	/* CONFIG_CPU_XSCALE */

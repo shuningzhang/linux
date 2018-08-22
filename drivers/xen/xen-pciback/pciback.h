@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * PCI Backend Common Data Structures & Function Declarations
  *
@@ -38,7 +37,6 @@ struct xen_pcibk_device {
 	struct xen_pci_sharedinfo *sh_info;
 	unsigned long flags;
 	struct work_struct op_work;
-	struct xen_pci_op op;
 };
 
 struct xen_pcibk_dev_data {
@@ -56,6 +54,7 @@ struct xen_pcibk_dev_data {
 
 /* Used by XenBus and xen_pcibk_ops.c */
 extern wait_queue_head_t xen_pcibk_aer_wait_queue;
+extern struct workqueue_struct *xen_pcibk_wq;
 /* Used by pcistub.c and conf_space_quirks.c */
 extern struct list_head xen_pcibk_quirks;
 

@@ -1,16 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
-subdir-y	+= brcm
-subdir-y	+= cavium-octeon
-subdir-y	+= img
-subdir-y	+= ingenic
-subdir-y	+= lantiq
-subdir-y	+= mscc
-subdir-y	+= mti
-subdir-y	+= netlogic
-subdir-y	+= ni
-subdir-y	+= pic32
-subdir-y	+= qca
-subdir-y	+= ralink
-subdir-y	+= xilfpga
+dts-dirs	+= brcm
+dts-dirs	+= cavium-octeon
+dts-dirs	+= lantiq
+dts-dirs	+= mti
+dts-dirs	+= netlogic
+dts-dirs	+= ralink
 
-obj-$(CONFIG_BUILTIN_DTB)	:= $(addsuffix /, $(subdir-y))
+obj-y		:= $(addsuffix /, $(dts-dirs))
+
+always		:= $(dtb-y)
+subdir-y	:= $(dts-dirs)
+clean-files	:= *.dtb *.dtb.S

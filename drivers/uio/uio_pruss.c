@@ -24,7 +24,6 @@
 #include <linux/io.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
-#include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/genalloc.h>
 
@@ -111,7 +110,6 @@ static void pruss_cleanup(struct device *dev, struct uio_pruss_dev *gdev)
 			      gdev->sram_vaddr,
 			      sram_pool_sz);
 	kfree(gdev->info);
-	clk_disable(gdev->pruss_clk);
 	clk_put(gdev->pruss_clk);
 	kfree(gdev);
 }
@@ -129,7 +127,7 @@ static int pruss_probe(struct platform_device *pdev)
 	if (!gdev)
 		return -ENOMEM;
 
-	gdev->info = kcalloc(MAX_PRUSS_EVT, sizeof(*p), GFP_KERNEL);
+	gdev->info = kzalloc(sizeof(*p) * MAX_PRUSS_EVT, GFP_KERNEL);
 	if (!gdev->info) {
 		kfree(gdev);
 		return -ENOMEM;
@@ -144,14 +142,7 @@ static int pruss_probe(struct platform_device *pdev)
 		kfree(gdev);
 		return ret;
 	} else {
-		ret = clk_enable(gdev->pruss_clk);
-		if (ret) {
-			dev_err(dev, "Failed to enable clock\n");
-			clk_put(gdev->pruss_clk);
-			kfree(gdev->info);
-			kfree(gdev);
-			return ret;
-		}
+		clk_enable(gdev->pruss_clk);
 	}
 
 	regs_prussio = platform_get_resource(pdev, IORESOURCE_MEM, 0);

@@ -9,7 +9,6 @@
  * or implied.
  */
 #include <linux/dma-mapping.h>
-#include <linux/dmaengine.h>
 #include <linux/init.h>
 #include <linux/clk.h>
 #include <linux/serial_8250.h>
@@ -21,7 +20,7 @@
 
 #include <mach/cputype.h>
 #include <mach/irqs.h>
-#include "psc.h"
+#include <mach/psc.h>
 #include <mach/mux.h>
 #include <mach/time.h>
 #include <mach/serial.h>
@@ -38,6 +37,12 @@
 					BIT_MASK(0))
 #define VSCLKDIS_MASK		(BIT_MASK(11) | BIT_MASK(10) | BIT_MASK(9) |\
 					BIT_MASK(8))
+
+/*
+ * Device specific clocks
+ */
+#define DM646X_REF_FREQ		27000000
+#define DM646X_AUX_FREQ		24000000
 
 #define DM646X_EMAC_BASE		0x01c80000
 #define DM646X_EMAC_MDIO_BASE		(DM646X_EMAC_BASE + 0x4000)
@@ -58,12 +63,13 @@ static struct pll_data pll2_data = {
 
 static struct clk ref_clk = {
 	.name = "ref_clk",
-	/* rate is initialized in dm646x_init_time() */
+	.rate = DM646X_REF_FREQ,
+	.set_rate = davinci_simple_set_rate,
 };
 
 static struct clk aux_clkin = {
 	.name = "aux_clkin",
-	/* rate is initialized in dm646x_init_time() */
+	.rate = DM646X_AUX_FREQ,
 };
 
 static struct clk pll1_clk = {
@@ -488,8 +494,7 @@ static u8 dm646x_default_priorities[DAVINCI_N_AINTC_IRQ] = {
 	[IRQ_DM646X_MCASP0TXINT]        = 7,
 	[IRQ_DM646X_MCASP0RXINT]        = 7,
 	[IRQ_DM646X_RESERVED_3]         = 7,
-	[IRQ_DM646X_MCASP1TXINT]        = 7,
-	[IRQ_TINT0_TINT12]              = 7,    /* clockevent */
+	[IRQ_DM646X_MCASP1TXINT]        = 7,    /* clockevent */
 	[IRQ_TINT0_TINT34]              = 7,    /* clocksource */
 	[IRQ_TINT1_TINT12]              = 7,    /* DSP timer */
 	[IRQ_TINT1_TINT34]              = 7,    /* system tick */
@@ -526,7 +531,8 @@ static u8 dm646x_default_priorities[DAVINCI_N_AINTC_IRQ] = {
 /*----------------------------------------------------------------------*/
 
 /* Four Transfer Controllers on DM646x */
-static s8 dm646x_queue_priority_mapping[][2] = {
+static s8
+dm646x_queue_priority_mapping[][2] = {
 	/* {event queue no, Priority} */
 	{0, 4},
 	{1, 0},
@@ -535,73 +541,65 @@ static s8 dm646x_queue_priority_mapping[][2] = {
 	{-1, -1},
 };
 
-static const struct dma_slave_map dm646x_edma_map[] = {
-	{ "davinci-mcasp.0", "tx", EDMA_FILTER_PARAM(0, 6) },
-	{ "davinci-mcasp.0", "rx", EDMA_FILTER_PARAM(0, 9) },
-	{ "davinci-mcasp.1", "tx", EDMA_FILTER_PARAM(0, 12) },
-	{ "spi_davinci", "tx", EDMA_FILTER_PARAM(0, 16) },
-	{ "spi_davinci", "rx", EDMA_FILTER_PARAM(0, 17) },
-};
-
-static struct edma_soc_info dm646x_edma_pdata = {
+static struct edma_soc_info edma_cc0_info = {
 	.queue_priority_mapping	= dm646x_queue_priority_mapping,
 	.default_queue		= EVENTQ_1,
-	.slave_map		= dm646x_edma_map,
-	.slavecnt		= ARRAY_SIZE(dm646x_edma_map),
+};
+
+static struct edma_soc_info *dm646x_edma_info[EDMA_MAX_CC] = {
+	&edma_cc0_info,
 };
 
 static struct resource edma_resources[] = {
 	{
-		.name	= "edma3_cc",
+		.name	= "edma_cc0",
 		.start	= 0x01c00000,
 		.end	= 0x01c00000 + SZ_64K - 1,
 		.flags	= IORESOURCE_MEM,
 	},
 	{
-		.name	= "edma3_tc0",
+		.name	= "edma_tc0",
 		.start	= 0x01c10000,
 		.end	= 0x01c10000 + SZ_1K - 1,
 		.flags	= IORESOURCE_MEM,
 	},
 	{
-		.name	= "edma3_tc1",
+		.name	= "edma_tc1",
 		.start	= 0x01c10400,
 		.end	= 0x01c10400 + SZ_1K - 1,
 		.flags	= IORESOURCE_MEM,
 	},
 	{
-		.name	= "edma3_tc2",
+		.name	= "edma_tc2",
 		.start	= 0x01c10800,
 		.end	= 0x01c10800 + SZ_1K - 1,
 		.flags	= IORESOURCE_MEM,
 	},
 	{
-		.name	= "edma3_tc3",
+		.name	= "edma_tc3",
 		.start	= 0x01c10c00,
 		.end	= 0x01c10c00 + SZ_1K - 1,
 		.flags	= IORESOURCE_MEM,
 	},
 	{
-		.name	= "edma3_ccint",
+		.name	= "edma0",
 		.start	= IRQ_CCINT0,
 		.flags	= IORESOURCE_IRQ,
 	},
 	{
-		.name	= "edma3_ccerrint",
+		.name	= "edma0_err",
 		.start	= IRQ_CCERRINT,
 		.flags	= IORESOURCE_IRQ,
 	},
 	/* not using TC*_ERR */
 };
 
-static const struct platform_device_info dm646x_edma_device __initconst = {
-	.name		= "edma",
-	.id		= 0,
-	.dma_mask	= DMA_BIT_MASK(32),
-	.res		= edma_resources,
-	.num_res	= ARRAY_SIZE(edma_resources),
-	.data		= &dm646x_edma_pdata,
-	.size_data	= sizeof(dm646x_edma_pdata),
+static struct platform_device dm646x_edma_device = {
+	.name			= "edma",
+	.id			= 0,
+	.dev.platform_data	= dm646x_edma_info,
+	.num_resources		= ARRAY_SIZE(edma_resources),
+	.resource		= edma_resources,
 };
 
 static struct resource dm646x_mcasp0_resources[] = {
@@ -876,12 +874,13 @@ struct platform_device dm646x_serial_device[] = {
 	}
 };
 
-static const struct davinci_soc_info davinci_soc_info_dm646x = {
+static struct davinci_soc_info davinci_soc_info_dm646x = {
 	.io_desc		= dm646x_io_desc,
 	.io_desc_num		= ARRAY_SIZE(dm646x_io_desc),
 	.jtag_id_reg		= 0x01c40028,
 	.ids			= dm646x_ids,
 	.ids_num		= ARRAY_SIZE(dm646x_ids),
+	.cpu_clks		= dm646x_clks,
 	.psc_bases		= dm646x_psc_bases,
 	.psc_bases_num		= ARRAY_SIZE(dm646x_psc_bases),
 	.pinmux_base		= DAVINCI_SYSTEM_MODULE_BASE,
@@ -937,27 +936,15 @@ void dm646x_setup_vpif(struct vpif_display_config *display_config,
 
 int __init dm646x_init_edma(struct edma_rsv_info *rsv)
 {
-	struct platform_device *edma_pdev;
+	edma_cc0_info.rsv = rsv;
 
-	dm646x_edma_pdata.rsv = rsv;
-
-	edma_pdev = platform_device_register_full(&dm646x_edma_device);
-	return PTR_ERR_OR_ZERO(edma_pdev);
+	return platform_device_register(&dm646x_edma_device);
 }
 
 void __init dm646x_init(void)
 {
 	davinci_common_init(&davinci_soc_info_dm646x);
 	davinci_map_sysmod();
-}
-
-void __init dm646x_init_time(unsigned long ref_clk_rate,
-			     unsigned long aux_clkin_rate)
-{
-	ref_clk.rate = ref_clk_rate;
-	aux_clkin.rate = aux_clkin_rate;
-	davinci_clk_init(dm646x_clks);
-	davinci_timer_init();
 }
 
 static int __init dm646x_init_devices(void)

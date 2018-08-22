@@ -18,13 +18,16 @@
 #include <linux/delay.h>
 #include <linux/backlight.h>
 #include <linux/gfp.h>
-#include <linux/gpio/consumer.h>
 #include <linux/module.h>
+#include <linux/platform_data/atmel.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <video/of_display_timing.h>
 #include <linux/regulator/consumer.h>
 #include <video/videomode.h>
+
+#include <asm/gpio.h>
 
 #include <video/atmel_lcdc.h>
 
@@ -61,7 +64,8 @@ struct atmel_lcdfb_info {
 };
 
 struct atmel_lcdfb_power_ctrl_gpio {
-	struct gpio_desc *gpiod;
+	int gpio;
+	int active_low;
 
 	struct list_head list;
 };
@@ -319,7 +323,7 @@ static inline void atmel_lcdfb_power_control(struct atmel_lcdfb_info *sinfo, int
 	}
 }
 
-static const struct fb_fix_screeninfo atmel_lcdfb_fix __initconst = {
+static struct fb_fix_screeninfo atmel_lcdfb_fix __initdata = {
 	.type		= FB_TYPE_PACKED_PIXELS,
 	.visual		= FB_VISUAL_TRUECOLOR,
 	.xpanstep	= 0,
@@ -411,8 +415,8 @@ static inline void atmel_lcdfb_free_video_memory(struct atmel_lcdfb_info *sinfo)
 {
 	struct fb_info *info = sinfo->info;
 
-	dma_free_wc(info->device, info->fix.smem_len, info->screen_base,
-		    info->fix.smem_start);
+	dma_free_writecombine(info->device, info->fix.smem_len,
+				info->screen_base, info->fix.smem_start);
 }
 
 /**
@@ -432,9 +436,8 @@ static int atmel_lcdfb_alloc_video_memory(struct atmel_lcdfb_info *sinfo)
 		    * ((var->bits_per_pixel + 7) / 8));
 	info->fix.smem_len = max(smem_len, sinfo->smem_len);
 
-	info->screen_base = dma_alloc_wc(info->device, info->fix.smem_len,
-					 (dma_addr_t *)&info->fix.smem_start,
-					 GFP_KERNEL);
+	info->screen_base = dma_alloc_writecombine(info->device, info->fix.smem_len,
+					(dma_addr_t *)&info->fix.smem_start, GFP_KERNEL);
 
 	if (!info->screen_base) {
 		return -ENOMEM;
@@ -996,7 +999,7 @@ static const char *atmel_lcdfb_wiring_modes[] = {
 	[ATMEL_LCDC_WIRING_RGB]	= "RGB",
 };
 
-static int atmel_lcdfb_get_of_wiring_modes(struct device_node *np)
+const int atmel_lcdfb_get_of_wiring_modes(struct device_node *np)
 {
 	const char *mode;
 	int err, i;
@@ -1017,7 +1020,7 @@ static void atmel_lcdfb_power_control_gpio(struct atmel_lcdfb_pdata *pdata, int 
 	struct atmel_lcdfb_power_ctrl_gpio *og;
 
 	list_for_each_entry(og, &pdata->pwr_gpios, list)
-		gpiod_set_value(og->gpiod, on);
+		gpio_set_value(og->gpio, on);
 }
 
 static int atmel_lcdfb_of_init(struct atmel_lcdfb_info *sinfo)
@@ -1030,11 +1033,11 @@ static int atmel_lcdfb_of_init(struct atmel_lcdfb_info *sinfo)
 	struct device_node *display_np;
 	struct device_node *timings_np;
 	struct display_timings *timings;
+	enum of_gpio_flags flags;
 	struct atmel_lcdfb_power_ctrl_gpio *og;
 	bool is_gpio_power = false;
-	struct gpio_desc *gpiod;
 	int ret = -ENOENT;
-	int i;
+	int i, gpio;
 
 	sinfo->config = (struct atmel_lcdfb_config*)
 		of_match_device(atmel_lcdfb_dt_ids, dev)->data;
@@ -1071,22 +1074,28 @@ static int atmel_lcdfb_of_init(struct atmel_lcdfb_info *sinfo)
 
 	INIT_LIST_HEAD(&pdata->pwr_gpios);
 	ret = -ENOMEM;
-	for (i = 0; i < gpiod_count(dev, "atmel,power-control"); i++) {
-		gpiod = devm_gpiod_get_index(dev, "atmel,power-control",
-					     i, GPIOD_ASIS);
-		if (IS_ERR(gpiod))
+	for (i = 0; i < of_gpio_named_count(display_np, "atmel,power-control-gpio"); i++) {
+		gpio = of_get_named_gpio_flags(display_np, "atmel,power-control-gpio",
+					       i, &flags);
+		if (gpio < 0)
 			continue;
 
 		og = devm_kzalloc(dev, sizeof(*og), GFP_KERNEL);
 		if (!og)
 			goto put_display_node;
 
-		og->gpiod = gpiod;
+		og->gpio = gpio;
+		og->active_low = flags & OF_GPIO_ACTIVE_LOW;
 		is_gpio_power = true;
-
-		ret = gpiod_direction_output(gpiod, gpiod_is_active_low(gpiod));
+		ret = devm_gpio_request(dev, gpio, "lcd-power-control-gpio");
 		if (ret) {
-			dev_err(dev, "set direction output gpio atmel,power-control[%d] failed\n", i);
+			dev_err(dev, "request gpio %d failed\n", gpio);
+			goto put_display_node;
+		}
+
+		ret = gpio_direction_output(gpio, og->active_low);
+		if (ret) {
+			dev_err(dev, "set direction output gpio %d failed\n", gpio);
 			goto put_display_node;
 		}
 		list_add(&og->list, &pdata->pwr_gpios);
@@ -1112,7 +1121,7 @@ static int atmel_lcdfb_of_init(struct atmel_lcdfb_info *sinfo)
 		goto put_display_node;
 	}
 
-	timings_np = of_get_child_by_name(display_np, "display-timings");
+	timings_np = of_find_node_by_name(display_np, "display-timings");
 	if (!timings_np) {
 		dev_err(dev, "failed to find display-timings node\n");
 		ret = -ENODEV;
@@ -1132,12 +1141,6 @@ static int atmel_lcdfb_of_init(struct atmel_lcdfb_info *sinfo)
 
 		fb_add_videomode(&fb_vm, &info->modelist);
 	}
-
-	/*
-	 * FIXME: Make sure we are not referencing any fields in display_np
-	 * and timings_np and drop our references to them before returning to
-	 * avoid leaking the nodes on probe deferral and driver unbind.
-	 */
 
 	return 0;
 
@@ -1263,8 +1266,7 @@ static int __init atmel_lcdfb_probe(struct platform_device *pdev)
 			goto stop_clk;
 		}
 
-		info->screen_base = ioremap_wc(info->fix.smem_start,
-					       info->fix.smem_len);
+		info->screen_base = ioremap(info->fix.smem_start, info->fix.smem_len);
 		if (!info->screen_base) {
 			ret = -ENOMEM;
 			goto release_intmem;

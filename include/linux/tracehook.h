@@ -50,7 +50,6 @@
 #include <linux/ptrace.h>
 #include <linux/security.h>
 #include <linux/task_work.h>
-#include <linux/memcontrol.h>
 struct linux_binprm;
 
 /*
@@ -124,7 +123,6 @@ static inline void tracehook_report_syscall_exit(struct pt_regs *regs, int step)
 {
 	if (step) {
 		siginfo_t info;
-		clear_siginfo(&info);
 		user_single_step_siginfo(current, regs, &info);
 		force_sig_info(SIGTRAP, &info, current);
 		return;
@@ -190,8 +188,6 @@ static inline void tracehook_notify_resume(struct pt_regs *regs)
 	smp_mb__after_atomic();
 	if (unlikely(current->task_works))
 		task_work_run();
-
-	mem_cgroup_handle_over_high();
 }
 
 #endif	/* <linux/tracehook.h> */

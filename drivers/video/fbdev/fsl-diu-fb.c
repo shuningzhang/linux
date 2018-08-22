@@ -388,7 +388,7 @@ struct fsl_diu_data {
 /* Determine the DMA address of a member of the fsl_diu_data structure */
 #define DMA_ADDR(p, f) ((p)->dma_addr + offsetof(struct fsl_diu_data, f))
 
-static const struct mfb_info mfb_template[] = {
+static struct mfb_info mfb_template[] = {
 	{
 		.index = PLANE0,
 		.id = "Panel0",
@@ -439,12 +439,12 @@ static const struct mfb_info mfb_template[] = {
 static void __attribute__ ((unused)) fsl_diu_dump(struct diu __iomem *hw)
 {
 	mb();
-	pr_debug("DIU: desc=%08x,%08x,%08x, gamma=%08x palette=%08x "
+	pr_debug("DIU: desc=%08x,%08x,%08x, gamma=%08x pallete=%08x "
 		 "cursor=%08x curs_pos=%08x diu_mode=%08x bgnd=%08x "
 		 "disp_size=%08x hsyn_para=%08x vsyn_para=%08x syn_pol=%08x "
 		 "thresholds=%08x int_mask=%08x plut=%08x\n",
 		 hw->desc[0], hw->desc[1], hw->desc[2], hw->gamma,
-		 hw->palette, hw->cursor, hw->curs_pos, hw->diu_mode,
+		 hw->pallete, hw->cursor, hw->curs_pos, hw->diu_mode,
 		 hw->bgnd, hw->disp_size, hw->hsyn_para, hw->vsyn_para,
 		 hw->syn_pol, hw->thresholds, hw->int_mask, hw->plut);
 	rmb();
@@ -479,10 +479,7 @@ static enum fsl_diu_monitor_port fsl_diu_name_to_port(const char *s)
 			port = FSL_DIU_PORT_DLVDS;
 	}
 
-	if (diu_ops.valid_monitor_port)
-		port = diu_ops.valid_monitor_port(port);
-
-	return port;
+	return diu_ops.valid_monitor_port(port);
 }
 
 /*
@@ -702,6 +699,12 @@ static int fsl_diu_check_var(struct fb_var_screeninfo *var,
 		var->xres_virtual = var->xres;
 	if (var->yres_virtual < var->yres)
 		var->yres_virtual = var->yres;
+
+	if (var->xoffset < 0)
+		var->xoffset = 0;
+
+	if (var->yoffset < 0)
+		var->yoffset = 0;
 
 	if (var->xoffset + info->var.xres > info->var.xres_virtual)
 		var->xoffset = info->var.xres_virtual - info->var.xres;
@@ -1248,7 +1251,8 @@ static int fsl_diu_pan_display(struct fb_var_screeninfo *var,
 	    (info->var.yoffset == var->yoffset))
 		return 0;	/* No change, do nothing */
 
-	if (var->xoffset + info->var.xres > info->var.xres_virtual
+	if (var->xoffset < 0 || var->yoffset < 0
+	    || var->xoffset + info->var.xres > info->var.xres_virtual
 	    || var->yoffset + info->var.yres > info->var.yres_virtual)
 		return -EINVAL;
 
@@ -1624,16 +1628,9 @@ static int fsl_diu_suspend(struct platform_device *ofdev, pm_message_t state)
 static int fsl_diu_resume(struct platform_device *ofdev)
 {
 	struct fsl_diu_data *data;
-	unsigned int i;
 
 	data = dev_get_drvdata(&ofdev->dev);
-
-	fsl_diu_enable_interrupts(data);
-	update_lcdc(data->fsl_diu_info);
-	for (i = 0; i < NUM_AOIS; i++) {
-		if (data->mfb[i].count)
-			fsl_diu_enable_panel(&data->fsl_diu_info[i]);
-	}
+	enable_lcdc(data->fsl_diu_info);
 
 	return 0;
 }
@@ -1868,7 +1865,7 @@ static int __init fsl_diu_setup(char *options)
 }
 #endif
 
-static const struct of_device_id fsl_diu_match[] = {
+static struct of_device_id fsl_diu_match[] = {
 #ifdef CONFIG_PPC_MPC512x
 	{
 		.compatible = "fsl,mpc5121-diu",
@@ -1911,14 +1908,6 @@ static int __init fsl_diu_init(void)
 #else
 	monitor_port = fsl_diu_name_to_port(monitor_string);
 #endif
-
-	/*
-	 * Must to verify set_pixel_clock. If not implement on platform,
-	 * then that means that there is no platform support for the DIU.
-	 */
-	if (!diu_ops.set_pixel_clock)
-		return -ENODEV;
-
 	pr_info("Freescale Display Interface Unit (DIU) framebuffer driver\n");
 
 #ifdef CONFIG_NOT_COHERENT_CACHE
@@ -1960,8 +1949,12 @@ static int __init fsl_diu_init(void)
 
 	of_node_put(np);
 	coherence_data = vmalloc(coherence_data_size);
-	if (!coherence_data)
+	if (!coherence_data) {
+		pr_err("fsl-diu-fb: could not allocate coherence data "
+		       "(size=%zu)\n", coherence_data_size);
 		return -ENOMEM;
+	}
+
 #endif
 
 	ret = platform_driver_register(&fsl_diu_driver);

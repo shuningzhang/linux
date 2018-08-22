@@ -25,7 +25,7 @@
 # Authors: Paul E. McKenney <paulmck@linux.vnet.ibm.com>
 
 PATH=`pwd`/tools/testing/selftests/rcutorture/bin:$PATH; export PATH
-. functions.sh
+. tools/testing/selftests/rcutorture/bin/functions.sh
 for rd in "$@"
 do
 	firsttime=1
@@ -43,11 +43,8 @@ do
 		if test -f "$i/console.log"
 		then
 			configcheck.sh $i/.config $i/ConfigFragment
-			if test -r $i/Make.oldconfig.err
-			then
-				cat $i/Make.oldconfig.err
-			fi
 			parse-build.sh $i/Make.out $configfile
+			parse-torture.sh $i/console.log $configfile
 			parse-console.sh $i/console.log $configfile
 			if test -r $i/Warnings
 			then

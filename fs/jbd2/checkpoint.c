@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * linux/fs/jbd2/checkpoint.c
  *
  * Written by Stephen C. Tweedie <sct@redhat.com>, 1999
  *
  * Copyright 1999 Red Hat Software --- All Rights Reserved
+ *
+ * This file is part of the Linux kernel and is made available under
+ * the terms of the GNU General Public License, version 2, or at your
+ * option, any later version, incorporated herein by reference.
  *
  * Checkpoint routines for the generic filesystem journaling code.
  * Part of the ext2fs journaling system.
@@ -183,7 +186,7 @@ __flush_batch(journal_t *journal, int *batch_count)
 
 	blk_start_plug(&plug);
 	for (i = 0; i < *batch_count; i++)
-		write_dirty_buffer(journal->j_chkpt_bhs[i], REQ_SYNC);
+		write_dirty_buffer(journal->j_chkpt_bhs[i], WRITE_SYNC);
 	blk_finish_plug(&plug);
 
 	for (i = 0; i < *batch_count; i++) {
@@ -424,6 +427,7 @@ static int journal_clean_one_cp_list(struct journal_head *jh, bool destroy)
 	struct journal_head *last_jh;
 	struct journal_head *next_jh = jh;
 	int ret;
+	int freed = 0;
 
 	if (!jh)
 		return 0;
@@ -437,9 +441,10 @@ static int journal_clean_one_cp_list(struct journal_head *jh, bool destroy)
 		else
 			ret = __jbd2_journal_remove_checkpoint(jh) + 1;
 		if (!ret)
-			return 0;
+			return freed;
 		if (ret == 2)
 			return 1;
+		freed = 1;
 		/*
 		 * This function only frees up some memory
 		 * if possible so we dont have an obligation
@@ -447,10 +452,10 @@ static int journal_clean_one_cp_list(struct journal_head *jh, bool destroy)
 		 * requested:
 		 */
 		if (need_resched())
-			return 0;
+			return freed;
 	} while (jh != last_jh);
 
-	return 0;
+	return freed;
 }
 
 /*

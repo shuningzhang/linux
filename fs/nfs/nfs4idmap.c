@@ -184,7 +184,7 @@ static struct key_type key_type_id_resolver = {
 	.read		= user_read,
 };
 
-int nfs_idmap_init(void)
+static int nfs_idmap_init_keyring(void)
 {
 	struct cred *cred;
 	struct key *keyring;
@@ -201,7 +201,7 @@ int nfs_idmap_init(void)
 				GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, cred,
 				(KEY_POS_ALL & ~KEY_POS_SETATTR) |
 				KEY_USR_VIEW | KEY_USR_READ,
-				KEY_ALLOC_NOT_IN_QUOTA, NULL, NULL);
+				KEY_ALLOC_NOT_IN_QUOTA, NULL);
 	if (IS_ERR(keyring)) {
 		ret = PTR_ERR(keyring);
 		goto failed_put_cred;
@@ -230,7 +230,7 @@ failed_put_cred:
 	return ret;
 }
 
-void nfs_idmap_quit(void)
+static void nfs_idmap_quit_keyring(void)
 {
 	key_revoke(id_resolver_cache->thread_keyring);
 	unregister_key_type(&key_type_id_resolver);
@@ -274,7 +274,7 @@ static struct key *nfs_idmap_request_key(const char *name, size_t namelen,
 	ssize_t ret;
 
 	ret = nfs_idmap_get_desc(name, namelen, type, strlen(type), &desc);
-	if (ret < 0)
+	if (ret <= 0)
 		return ERR_PTR(ret);
 
 	rkey = request_key(&key_type_id_resolver, desc, "");
@@ -297,7 +297,7 @@ static ssize_t nfs_idmap_get_key(const char *name, size_t namelen,
 {
 	const struct cred *saved_cred;
 	struct key *rkey;
-	const struct user_key_payload *payload;
+	struct user_key_payload *payload;
 	ssize_t ret;
 
 	saved_cred = override_creds(id_resolver_cache);
@@ -316,7 +316,7 @@ static ssize_t nfs_idmap_get_key(const char *name, size_t namelen,
 	if (ret < 0)
 		goto out_up;
 
-	payload = user_key_payload_rcu(rkey);
+	payload = rcu_dereference(rkey->payload.rcudata);
 	if (IS_ERR_OR_NULL(payload)) {
 		ret = PTR_ERR(payload);
 		goto out_up;
@@ -343,7 +343,7 @@ static ssize_t nfs_idmap_lookup_name(__u32 id, const char *type, char *buf,
 	int id_len;
 	ssize_t ret;
 
-	id_len = nfs_map_numeric_to_string(id, id_str, sizeof(id_str));
+	id_len = snprintf(id_str, sizeof(id_str), "%u", id);
 	ret = nfs_idmap_get_key(id_str, id_len, type, buf, buflen, idmap);
 	if (ret < 0)
 		return -EINVAL;
@@ -364,8 +364,7 @@ static int nfs_idmap_lookup_id(const char *name, size_t namelen, const char *typ
 		ret = -EINVAL;
 	} else {
 		ret = kstrtol(id_str, 10, &id_long);
-		if (!ret)
-			*id = (__u32)id_long;
+		*id = (__u32)id_long;
 	}
 	return ret;
 }
@@ -493,6 +492,21 @@ nfs_idmap_delete(struct nfs_client *clp)
 	kfree(idmap);
 }
 
+int nfs_idmap_init(void)
+{
+	int ret;
+	ret = nfs_idmap_init_keyring();
+	if (ret != 0)
+		goto out;
+out:
+	return ret;
+}
+
+void nfs_idmap_quit(void)
+{
+	nfs_idmap_quit_keyring();
+}
+
 static int nfs_idmap_prepare_message(char *desc, struct idmap *idmap,
 				     struct idmap_msg *im,
 				     struct rpc_pipe_msg *msg)
@@ -568,13 +582,9 @@ static int nfs_idmap_legacy_upcall(struct key_construction *cons,
 	struct idmap_msg *im;
 	struct idmap *idmap = (struct idmap *)aux;
 	struct key *key = cons->key;
-	int ret = -ENOKEY;
-
-	if (!aux)
-		goto out1;
+	int ret = -ENOMEM;
 
 	/* msg and im are freed in idmap_pipe_destroy_msg */
-	ret = -ENOMEM;
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		goto out1;
@@ -627,8 +637,7 @@ static int nfs_idmap_read_and_verify_message(struct idmap_msg *im,
 		if (strcmp(upcall->im_name, im->im_name) != 0)
 			break;
 		/* Note: here we store the NUL terminator too */
-		len = 1 + nfs_map_numeric_to_string(im->im_id, id_str,
-						    sizeof(id_str));
+		len = sprintf(id_str, "%d", im->im_id) + 1;
 		ret = nfs_idmap_instantiate(key, authkey, id_str, len);
 		break;
 	case IDMAP_CONV_IDTONAME:

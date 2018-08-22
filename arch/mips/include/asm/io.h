@@ -256,7 +256,6 @@ static inline void __iomem * __ioremap_mode(phys_addr_t offset, unsigned long si
  */
 #define ioremap_nocache(offset, size)					\
 	__ioremap_mode((offset), (size), _CACHE_UNCACHED)
-#define ioremap_uc ioremap_nocache
 
 /*
  * ioremap_cachable -	map bus memory into CPU space
@@ -275,7 +274,6 @@ static inline void __iomem * __ioremap_mode(phys_addr_t offset, unsigned long si
  */
 #define ioremap_cachable(offset, size)					\
 	__ioremap_mode((offset), (size), _page_cachable_default)
-#define ioremap_cache ioremap_cachable
 
 /*
  * These two are MIPS specific ioremap variant.	 ioremap_cacheable_cow
@@ -304,10 +302,10 @@ static inline void iounmap(const volatile void __iomem *addr)
 #undef __IS_KSEG1
 }
 
-#if defined(CONFIG_CPU_CAVIUM_OCTEON) || defined(CONFIG_LOONGSON3_ENHANCEMENT)
-#define war_io_reorder_wmb()		wmb()
+#ifdef CONFIG_CPU_CAVIUM_OCTEON
+#define war_octeon_io_reorder_wmb()		wmb()
 #else
-#define war_io_reorder_wmb()		barrier()
+#define war_octeon_io_reorder_wmb()		do { } while (0)
 #endif
 
 #define __BUILD_MEMORY_SINGLE(pfx, bwlq, type, irq)			\
@@ -318,7 +316,7 @@ static inline void pfx##write##bwlq(type val,				\
 	volatile type *__mem;						\
 	type __val;							\
 									\
-	war_io_reorder_wmb();					\
+	war_octeon_io_reorder_wmb();					\
 									\
 	__mem = (void *)__swizzle_addr_##bwlq((unsigned long)(mem));	\
 									\
@@ -377,8 +375,6 @@ static inline type pfx##read##bwlq(const volatile void __iomem *mem)	\
 		BUG();							\
 	}								\
 									\
-	/* prevent prefetching of coherent DMA data prematurely */	\
-	rmb();								\
 	return pfx##ioswab##bwlq(__mem, __val);				\
 }
 
@@ -389,7 +385,7 @@ static inline void pfx##out##bwlq##p(type val, unsigned long port)	\
 	volatile type *__addr;						\
 	type __val;							\
 									\
-	war_io_reorder_wmb();					\
+	war_octeon_io_reorder_wmb();					\
 									\
 	__addr = (void *)__swizzle_addr_##bwlq(mips_io_port_base + port); \
 									\
@@ -414,8 +410,6 @@ static inline type pfx##in##bwlq##p(unsigned long port)			\
 	__val = *__addr;						\
 	slow;								\
 									\
-	/* prevent prefetching of coherent DMA data prematurely */	\
-	rmb();								\
 	return pfx##ioswab##bwlq(__addr, __val);			\
 }
 
@@ -635,7 +629,5 @@ extern void (*_dma_cache_inv)(unsigned long start, unsigned long size);
  * Convert a virtual cached pointer to an uncached pointer
  */
 #define xlate_dev_kmem_ptr(p)	p
-
-void __ioread64_copy(void *to, const void __iomem *from, size_t count);
 
 #endif /* _ASM_IO_H */

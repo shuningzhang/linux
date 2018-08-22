@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * PCI Express PCI Hot Plug Driver
  *
@@ -9,7 +8,23 @@
  *
  * All rights reserved.
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or (at
+ * your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
+ * NON INFRINGEMENT.  See the GNU General Public License for more
+ * details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
  * Send feedback to <greg@kroah.com>,<kristen.c.accardi@intel.com>
+ *
  */
 
 #include <linux/kernel.h>
@@ -35,13 +50,14 @@ static irqreturn_t pcie_isr(int irq, void *dev_id);
 static void start_int_poll_timer(struct controller *ctrl, int sec);
 
 /* This is the interrupt polling timeout function. */
-static void int_poll_timeout(struct timer_list *t)
+static void int_poll_timeout(unsigned long data)
 {
-	struct controller *ctrl = from_timer(ctrl, t, poll_timer);
+	struct controller *ctrl = (struct controller *)data;
 
 	/* Poll for interrupt events.  regs == NULL => polling */
 	pcie_isr(0, ctrl);
 
+	init_timer(&ctrl->poll_timer);
 	if (!pciehp_poll_time)
 		pciehp_poll_time = 2; /* default polling interval is 2 sec */
 
@@ -55,6 +71,8 @@ static void start_int_poll_timer(struct controller *ctrl, int sec)
 	if ((sec <= 0) || (sec > 60))
 		sec = 2;
 
+	ctrl->poll_timer.function = &int_poll_timeout;
+	ctrl->poll_timer.data = (unsigned long)ctrl;
 	ctrl->poll_timer.expires = jiffies + sec * HZ;
 	add_timer(&ctrl->poll_timer);
 }
@@ -65,7 +83,7 @@ static inline int pciehp_request_irq(struct controller *ctrl)
 
 	/* Install interrupt polling timer. Start with 10 sec delay */
 	if (pciehp_poll_mode) {
-		timer_setup(&ctrl->poll_timer, int_poll_timeout, 0);
+		init_timer(&ctrl->poll_timer);
 		start_int_poll_timer(ctrl, 10);
 		return 0;
 	}
@@ -91,23 +109,21 @@ static int pcie_poll_cmd(struct controller *ctrl, int timeout)
 	struct pci_dev *pdev = ctrl_dev(ctrl);
 	u16 slot_status;
 
-	while (true) {
+	pcie_capability_read_word(pdev, PCI_EXP_SLTSTA, &slot_status);
+	if (slot_status & PCI_EXP_SLTSTA_CC) {
+		pcie_capability_write_word(pdev, PCI_EXP_SLTSTA,
+					   PCI_EXP_SLTSTA_CC);
+		return 1;
+	}
+	while (timeout > 0) {
+		msleep(10);
+		timeout -= 10;
 		pcie_capability_read_word(pdev, PCI_EXP_SLTSTA, &slot_status);
-		if (slot_status == (u16) ~0) {
-			ctrl_info(ctrl, "%s: no response from device\n",
-				  __func__);
-			return 0;
-		}
-
 		if (slot_status & PCI_EXP_SLTSTA_CC) {
 			pcie_capability_write_word(pdev, PCI_EXP_SLTSTA,
 						   PCI_EXP_SLTSTA_CC);
 			return 1;
 		}
-		if (timeout < 0)
-			break;
-		msleep(10);
-		timeout -= 10;
 	}
 	return 0;	/* timeout */
 }
@@ -146,22 +162,25 @@ static void pcie_wait_cmd(struct controller *ctrl)
 	else
 		rc = pcie_poll_cmd(ctrl, jiffies_to_msecs(timeout));
 
+	/*
+	 * Controllers with errata like Intel CF118 don't generate
+	 * completion notifications unless the power/indicator/interlock
+	 * control bits are changed.  On such controllers, we'll emit this
+	 * timeout message when we wait for completion of commands that
+	 * don't change those bits, e.g., commands that merely enable
+	 * interrupts.
+	 */
 	if (!rc)
 		ctrl_info(ctrl, "Timeout on hotplug command %#06x (issued %u msec ago)\n",
 			  ctrl->slot_ctrl,
 			  jiffies_to_msecs(jiffies - ctrl->cmd_started));
 }
 
-#define CC_ERRATUM_MASK		(PCI_EXP_SLTCTL_PCC |	\
-				 PCI_EXP_SLTCTL_PIC |	\
-				 PCI_EXP_SLTCTL_AIC |	\
-				 PCI_EXP_SLTCTL_EIC)
-
 static void pcie_do_write_cmd(struct controller *ctrl, u16 cmd,
 			      u16 mask, bool wait)
 {
 	struct pci_dev *pdev = ctrl_dev(ctrl);
-	u16 slot_ctrl_orig, slot_ctrl;
+	u16 slot_ctrl;
 
 	mutex_lock(&ctrl->ctrl_lock);
 
@@ -171,12 +190,6 @@ static void pcie_do_write_cmd(struct controller *ctrl, u16 cmd,
 	pcie_wait_cmd(ctrl);
 
 	pcie_capability_read_word(pdev, PCI_EXP_SLTCTL, &slot_ctrl);
-	if (slot_ctrl == (u16) ~0) {
-		ctrl_info(ctrl, "%s: no response from device\n", __func__);
-		goto out;
-	}
-
-	slot_ctrl_orig = slot_ctrl;
 	slot_ctrl &= ~mask;
 	slot_ctrl |= (cmd & mask);
 	ctrl->cmd_busy = 1;
@@ -186,24 +199,12 @@ static void pcie_do_write_cmd(struct controller *ctrl, u16 cmd,
 	ctrl->slot_ctrl = slot_ctrl;
 
 	/*
-	 * Controllers with the Intel CF118 and similar errata advertise
-	 * Command Completed support, but they only set Command Completed
-	 * if we change the "Control" bits for power, power indicator,
-	 * attention indicator, or interlock.  If we only change the
-	 * "Enable" bits, they never set the Command Completed bit.
-	 */
-	if (pdev->broken_cmd_compl &&
-	    (slot_ctrl_orig & CC_ERRATUM_MASK) == (slot_ctrl & CC_ERRATUM_MASK))
-		ctrl->cmd_busy = 0;
-
-	/*
 	 * Optionally wait for the hardware to be ready for a new command,
 	 * indicating completion of the above issued command.
 	 */
 	if (wait)
 		pcie_wait_cmd(ctrl);
 
-out:
 	mutex_unlock(&ctrl->ctrl_lock);
 }
 
@@ -239,11 +240,25 @@ bool pciehp_check_link_active(struct controller *ctrl)
 	return ret;
 }
 
+static void __pcie_wait_link_active(struct controller *ctrl, bool active)
+{
+	int timeout = 1000;
+
+	if (pciehp_check_link_active(ctrl) == active)
+		return;
+	while (timeout > 0) {
+		msleep(10);
+		timeout -= 10;
+		if (pciehp_check_link_active(ctrl) == active)
+			return;
+	}
+	ctrl_dbg(ctrl, "Data Link Layer Link Active not %s in 1000 msec\n",
+			active ? "set" : "cleared");
+}
+
 static void pcie_wait_link_active(struct controller *ctrl)
 {
-	struct pci_dev *pdev = ctrl_dev(ctrl);
-
-	pcie_wait_for_link(pdev, true);
+	__pcie_wait_link_active(ctrl, true);
 }
 
 static bool pci_bus_check_dev(struct pci_bus *bus, int devfn)
@@ -297,8 +312,7 @@ int pciehp_check_link_status(struct controller *ctrl)
 	ctrl_dbg(ctrl, "%s: lnk_status = %x\n", __func__, lnk_status);
 	if ((lnk_status & PCI_EXP_LNKSTA_LT) ||
 	    !(lnk_status & PCI_EXP_LNKSTA_NLW)) {
-		ctrl_err(ctrl, "link training error: status %#06x\n",
-			 lnk_status);
+		ctrl_err(ctrl, "Link Training Error occurs\n");
 		return -1;
 	}
 
@@ -330,18 +344,6 @@ static int __pciehp_link_set(struct controller *ctrl, bool enable)
 static int pciehp_link_enable(struct controller *ctrl)
 {
 	return __pciehp_link_set(ctrl, true);
-}
-
-int pciehp_get_raw_indicator_status(struct hotplug_slot *hotplug_slot,
-				    u8 *status)
-{
-	struct slot *slot = hotplug_slot->private;
-	struct pci_dev *pdev = ctrl_dev(slot->ctrl);
-	u16 slot_ctrl;
-
-	pcie_capability_read_word(pdev, PCI_EXP_SLTCTL, &slot_ctrl);
-	*status = (slot_ctrl & (PCI_EXP_SLTCTL_AIC | PCI_EXP_SLTCTL_PIC)) >> 6;
-	return 0;
 }
 
 void pciehp_get_attention_status(struct slot *slot, u8 *status)
@@ -418,17 +420,6 @@ int pciehp_query_power_fault(struct slot *slot)
 
 	pcie_capability_read_word(pdev, PCI_EXP_SLTSTA, &slot_status);
 	return !!(slot_status & PCI_EXP_SLTSTA_PFD);
-}
-
-int pciehp_set_raw_indicator_status(struct hotplug_slot *hotplug_slot,
-				    u8 status)
-{
-	struct slot *slot = hotplug_slot->private;
-	struct controller *ctrl = slot->ctrl;
-
-	pcie_write_cmd_nowait(ctrl, status << 6,
-			      PCI_EXP_SLTCTL_AIC | PCI_EXP_SLTCTL_PIC);
-	return 0;
 }
 
 void pciehp_set_attention_status(struct slot *slot, u8 value)
@@ -535,54 +526,40 @@ void pciehp_power_off_slot(struct slot *slot)
 		 PCI_EXP_SLTCTL_PWR_OFF);
 }
 
-static irqreturn_t pciehp_isr(int irq, void *dev_id)
+static irqreturn_t pcie_isr(int irq, void *dev_id)
 {
 	struct controller *ctrl = (struct controller *)dev_id;
 	struct pci_dev *pdev = ctrl_dev(ctrl);
 	struct pci_bus *subordinate = pdev->subordinate;
 	struct pci_dev *dev;
 	struct slot *slot = ctrl->slot;
-	u16 status, events;
-	u8 present;
-	bool link;
-
-	/* Interrupts cannot originate from a controller that's asleep */
-	if (pdev->current_state == PCI_D3cold)
-		return IRQ_NONE;
-
-	pcie_capability_read_word(pdev, PCI_EXP_SLTSTA, &status);
-	if (status == (u16) ~0) {
-		ctrl_info(ctrl, "%s: no response from device\n", __func__);
-		return IRQ_NONE;
-	}
+	u16 detected, intr_loc;
 
 	/*
-	 * Slot Status contains plain status bits as well as event
-	 * notification bits; right now we only want the event bits.
+	 * In order to guarantee that all interrupt events are
+	 * serviced, we need to re-inspect Slot Status register after
+	 * clearing what is presumed to be the last pending interrupt.
 	 */
-	events = status & (PCI_EXP_SLTSTA_ABP | PCI_EXP_SLTSTA_PFD |
-			   PCI_EXP_SLTSTA_PDC | PCI_EXP_SLTSTA_CC |
-			   PCI_EXP_SLTSTA_DLLSC);
+	intr_loc = 0;
+	do {
+		pcie_capability_read_word(pdev, PCI_EXP_SLTSTA, &detected);
 
-	/*
-	 * If we've already reported a power fault, don't report it again
-	 * until we've done something to handle it.
-	 */
-	if (ctrl->power_fault_detected)
-		events &= ~PCI_EXP_SLTSTA_PFD;
+		detected &= (PCI_EXP_SLTSTA_ABP | PCI_EXP_SLTSTA_PFD |
+			     PCI_EXP_SLTSTA_MRLSC | PCI_EXP_SLTSTA_PDC |
+			     PCI_EXP_SLTSTA_CC | PCI_EXP_SLTSTA_DLLSC);
+		detected &= ~intr_loc;
+		intr_loc |= detected;
+		if (!intr_loc)
+			return IRQ_NONE;
+		if (detected)
+			pcie_capability_write_word(pdev, PCI_EXP_SLTSTA,
+						   intr_loc);
+	} while (detected);
 
-	if (!events)
-		return IRQ_NONE;
-
-	/* Capture link status before clearing interrupts */
-	if (events & PCI_EXP_SLTSTA_DLLSC)
-		link = pciehp_check_link_active(ctrl);
-
-	pcie_capability_write_word(pdev, PCI_EXP_SLTSTA, events);
-	ctrl_dbg(ctrl, "pending interrupts %#06x from Slot Status\n", events);
+	ctrl_dbg(ctrl, "%s: intr_loc %x\n", __func__, intr_loc);
 
 	/* Check Command Complete Interrupt Pending */
-	if (events & PCI_EXP_SLTSTA_CC) {
+	if (intr_loc & PCI_EXP_SLTSTA_CC) {
 		ctrl->cmd_busy = 0;
 		smp_mb();
 		wake_up(&ctrl->queue);
@@ -592,68 +569,40 @@ static irqreturn_t pciehp_isr(int irq, void *dev_id)
 		list_for_each_entry(dev, &subordinate->devices, bus_list) {
 			if (dev->ignore_hotplug) {
 				ctrl_dbg(ctrl, "ignoring hotplug event %#06x (%s requested no hotplug)\n",
-					 events, pci_name(dev));
+					 intr_loc, pci_name(dev));
 				return IRQ_HANDLED;
 			}
 		}
 	}
 
-	/* Check Attention Button Pressed */
-	if (events & PCI_EXP_SLTSTA_ABP) {
-		ctrl_info(ctrl, "Slot(%s): Attention button pressed\n",
-			  slot_name(slot));
-		pciehp_queue_interrupt_event(slot, INT_BUTTON_PRESS);
-	}
+	if (!(intr_loc & ~PCI_EXP_SLTSTA_CC))
+		return IRQ_HANDLED;
 
-	/*
-	 * Check Link Status Changed at higher precedence than Presence
-	 * Detect Changed.  The PDS value may be set to "card present" from
-	 * out-of-band detection, which may be in conflict with a Link Down
-	 * and cause the wrong event to queue.
-	 */
-	if (events & PCI_EXP_SLTSTA_DLLSC) {
-		ctrl_info(ctrl, "Slot(%s): Link %s\n", slot_name(slot),
-			  link ? "Up" : "Down");
-		pciehp_queue_interrupt_event(slot, link ? INT_LINK_UP :
-					     INT_LINK_DOWN);
-	} else if (events & PCI_EXP_SLTSTA_PDC) {
-		present = !!(status & PCI_EXP_SLTSTA_PDS);
-		ctrl_info(ctrl, "Slot(%s): Card %spresent\n", slot_name(slot),
-			  present ? "" : "not ");
-		pciehp_queue_interrupt_event(slot, present ? INT_PRESENCE_ON :
-					     INT_PRESENCE_OFF);
-	}
+	/* Check MRL Sensor Changed */
+	if (intr_loc & PCI_EXP_SLTSTA_MRLSC)
+		pciehp_handle_switch_change(slot);
+
+	/* Check Attention Button Pressed */
+	if (intr_loc & PCI_EXP_SLTSTA_ABP)
+		pciehp_handle_attention_button(slot);
+
+	/* Check Presence Detect Changed */
+	if (intr_loc & PCI_EXP_SLTSTA_PDC)
+		pciehp_handle_presence_change(slot);
 
 	/* Check Power Fault Detected */
-	if ((events & PCI_EXP_SLTSTA_PFD) && !ctrl->power_fault_detected) {
+	if ((intr_loc & PCI_EXP_SLTSTA_PFD) && !ctrl->power_fault_detected) {
 		ctrl->power_fault_detected = 1;
-		ctrl_err(ctrl, "Slot(%s): Power fault\n", slot_name(slot));
-		pciehp_queue_interrupt_event(slot, INT_POWER_FAULT);
+		pciehp_handle_power_fault(slot);
 	}
+
+	if (intr_loc & PCI_EXP_SLTSTA_DLLSC)
+		pciehp_handle_linkstate_change(slot);
 
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t pcie_isr(int irq, void *dev_id)
-{
-	irqreturn_t rc, handled = IRQ_NONE;
-
-	/*
-	 * To guarantee that all interrupt events are serviced, we need to
-	 * re-inspect Slot Status register after clearing what is presumed
-	 * to be the last pending interrupt.
-	 */
-	do {
-		rc = pciehp_isr(irq, dev_id);
-		if (rc == IRQ_HANDLED)
-			handled = IRQ_HANDLED;
-	} while (rc == IRQ_HANDLED);
-
-	/* Return IRQ_HANDLED if we handled one or more events */
-	return handled;
-}
-
-static void pcie_enable_notification(struct controller *ctrl)
+void pcie_enable_notification(struct controller *ctrl)
 {
 	u16 cmd, mask;
 
@@ -678,28 +627,19 @@ static void pcie_enable_notification(struct controller *ctrl)
 		cmd |= PCI_EXP_SLTCTL_ABPE;
 	else
 		cmd |= PCI_EXP_SLTCTL_PDCE;
+	if (MRL_SENS(ctrl))
+		cmd |= PCI_EXP_SLTCTL_MRLSCE;
 	if (!pciehp_poll_mode)
 		cmd |= PCI_EXP_SLTCTL_HPIE | PCI_EXP_SLTCTL_CCIE;
 
 	mask = (PCI_EXP_SLTCTL_PDCE | PCI_EXP_SLTCTL_ABPE |
-		PCI_EXP_SLTCTL_PFDE |
+		PCI_EXP_SLTCTL_MRLSCE | PCI_EXP_SLTCTL_PFDE |
 		PCI_EXP_SLTCTL_HPIE | PCI_EXP_SLTCTL_CCIE |
 		PCI_EXP_SLTCTL_DLLSCE);
 
 	pcie_write_cmd_nowait(ctrl, cmd, mask);
 	ctrl_dbg(ctrl, "%s: SLOTCTRL %x write cmd %x\n", __func__,
 		 pci_pcie_cap(ctrl->pcie->port) + PCI_EXP_SLTCTL, cmd);
-}
-
-void pcie_reenable_notification(struct controller *ctrl)
-{
-	/*
-	 * Clear both Presence and Data Link Layer Changed to make sure
-	 * those events still fire after we have re-enabled them.
-	 */
-	pcie_capability_write_word(ctrl->pcie->port, PCI_EXP_SLTSTA,
-				   PCI_EXP_SLTSTA_PDC | PCI_EXP_SLTSTA_DLLSC);
-	pcie_enable_notification(ctrl);
 }
 
 static void pcie_disable_notification(struct controller *ctrl)
@@ -752,7 +692,8 @@ int pciehp_reset_slot(struct slot *slot, int probe)
 	ctrl_dbg(ctrl, "%s: SLOTCTRL %x write cmd %x\n", __func__,
 		 pci_pcie_cap(ctrl->pcie->port) + PCI_EXP_SLTCTL, ctrl_mask);
 	if (pciehp_poll_mode)
-		int_poll_timeout(&ctrl->poll_timer);
+		int_poll_timeout(ctrl->poll_timer.data);
+
 	return 0;
 }
 
@@ -782,7 +723,7 @@ static int pcie_init_slot(struct controller *ctrl)
 	if (!slot)
 		return -ENOMEM;
 
-	slot->wq = alloc_ordered_workqueue("pciehp-%u", 0, PSN(ctrl));
+	slot->wq = alloc_workqueue("pciehp-%u", 0, 0, PSN(ctrl));
 	if (!slot->wq)
 		goto abort;
 
@@ -807,13 +748,48 @@ static void pcie_cleanup_slot(struct controller *ctrl)
 
 static inline void dbg_ctrl(struct controller *ctrl)
 {
-	struct pci_dev *pdev = ctrl->pcie->port;
+	int i;
 	u16 reg16;
+	struct pci_dev *pdev = ctrl->pcie->port;
 
 	if (!pciehp_debug)
 		return;
 
+	ctrl_info(ctrl, "Hotplug Controller:\n");
+	ctrl_info(ctrl, "  Seg/Bus/Dev/Func/IRQ : %s IRQ %d\n",
+		  pci_name(pdev), pdev->irq);
+	ctrl_info(ctrl, "  Vendor ID            : 0x%04x\n", pdev->vendor);
+	ctrl_info(ctrl, "  Device ID            : 0x%04x\n", pdev->device);
+	ctrl_info(ctrl, "  Subsystem ID         : 0x%04x\n",
+		  pdev->subsystem_device);
+	ctrl_info(ctrl, "  Subsystem Vendor ID  : 0x%04x\n",
+		  pdev->subsystem_vendor);
+	ctrl_info(ctrl, "  PCIe Cap offset      : 0x%02x\n",
+		  pci_pcie_cap(pdev));
+	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
+		if (!pci_resource_len(pdev, i))
+			continue;
+		ctrl_info(ctrl, "  PCI resource [%d]     : %pR\n",
+			  i, &pdev->resource[i]);
+	}
 	ctrl_info(ctrl, "Slot Capabilities      : 0x%08x\n", ctrl->slot_cap);
+	ctrl_info(ctrl, "  Physical Slot Number : %d\n", PSN(ctrl));
+	ctrl_info(ctrl, "  Attention Button     : %3s\n",
+		  ATTN_BUTTN(ctrl) ? "yes" : "no");
+	ctrl_info(ctrl, "  Power Controller     : %3s\n",
+		  POWER_CTRL(ctrl) ? "yes" : "no");
+	ctrl_info(ctrl, "  MRL Sensor           : %3s\n",
+		  MRL_SENS(ctrl)   ? "yes" : "no");
+	ctrl_info(ctrl, "  Attention Indicator  : %3s\n",
+		  ATTN_LED(ctrl)   ? "yes" : "no");
+	ctrl_info(ctrl, "  Power Indicator      : %3s\n",
+		  PWR_LED(ctrl)    ? "yes" : "no");
+	ctrl_info(ctrl, "  Hot-Plug Surprise    : %3s\n",
+		  HP_SUPR_RM(ctrl) ? "yes" : "no");
+	ctrl_info(ctrl, "  EMI Present          : %3s\n",
+		  EMI(ctrl)        ? "yes" : "no");
+	ctrl_info(ctrl, "  Command Completed    : %3s\n",
+		  NO_CMD_CMPL(ctrl) ? "no" : "yes");
 	pcie_capability_read_word(pdev, PCI_EXP_SLTSTA, &reg16);
 	ctrl_info(ctrl, "Slot Status            : 0x%04x\n", reg16);
 	pcie_capability_read_word(pdev, PCI_EXP_SLTCTL, &reg16);
@@ -829,22 +805,12 @@ struct controller *pcie_init(struct pcie_device *dev)
 	struct pci_dev *pdev = dev->port;
 
 	ctrl = kzalloc(sizeof(*ctrl), GFP_KERNEL);
-	if (!ctrl)
+	if (!ctrl) {
+		dev_err(&dev->device, "%s: Out of memory\n", __func__);
 		goto abort;
-
+	}
 	ctrl->pcie = dev;
 	pcie_capability_read_dword(pdev, PCI_EXP_SLTCAP, &slot_cap);
-
-	if (pdev->hotplug_user_indicators)
-		slot_cap &= ~(PCI_EXP_SLTCAP_AIP | PCI_EXP_SLTCAP_PIP);
-
-	/*
-	 * We assume no Thunderbolt controllers support Command Complete events,
-	 * but some controllers falsely claim they do.
-	 */
-	if (pdev->is_thunderbolt)
-		slot_cap |= PCI_EXP_SLTCAP_NCCS;
-
 	ctrl->slot_cap = slot_cap;
 	mutex_init(&ctrl->ctrl_lock);
 	init_waitqueue_head(&ctrl->queue);
@@ -852,33 +818,27 @@ struct controller *pcie_init(struct pcie_device *dev)
 
 	/* Check if Data Link Layer Link Active Reporting is implemented */
 	pcie_capability_read_dword(pdev, PCI_EXP_LNKCAP, &link_cap);
-	if (link_cap & PCI_EXP_LNKCAP_DLLLARC)
+	if (link_cap & PCI_EXP_LNKCAP_DLLLARC) {
+		ctrl_dbg(ctrl, "Link Active Reporting supported\n");
 		ctrl->link_active_reporting = 1;
+	}
 
-	/*
-	 * Clear all remaining event bits in Slot Status register except
-	 * Presence Detect Changed. We want to make sure possible
-	 * hotplug event is triggered when the interrupt is unmasked so
-	 * that we don't lose that event.
-	 */
+	/* Clear all remaining event bits in Slot Status register */
 	pcie_capability_write_word(pdev, PCI_EXP_SLTSTA,
 		PCI_EXP_SLTSTA_ABP | PCI_EXP_SLTSTA_PFD |
-		PCI_EXP_SLTSTA_MRLSC | PCI_EXP_SLTSTA_CC |
-		PCI_EXP_SLTSTA_DLLSC);
+		PCI_EXP_SLTSTA_MRLSC | PCI_EXP_SLTSTA_PDC |
+		PCI_EXP_SLTSTA_CC | PCI_EXP_SLTSTA_DLLSC);
 
-	ctrl_info(ctrl, "Slot #%d AttnBtn%c PwrCtrl%c MRL%c AttnInd%c PwrInd%c HotPlug%c Surprise%c Interlock%c NoCompl%c LLActRep%c%s\n",
+	ctrl_info(ctrl, "Slot #%d AttnBtn%c AttnInd%c PwrInd%c PwrCtrl%c MRL%c Interlock%c NoCompl%c LLActRep%c\n",
 		(slot_cap & PCI_EXP_SLTCAP_PSN) >> 19,
 		FLAG(slot_cap, PCI_EXP_SLTCAP_ABP),
-		FLAG(slot_cap, PCI_EXP_SLTCAP_PCP),
-		FLAG(slot_cap, PCI_EXP_SLTCAP_MRLSP),
 		FLAG(slot_cap, PCI_EXP_SLTCAP_AIP),
 		FLAG(slot_cap, PCI_EXP_SLTCAP_PIP),
-		FLAG(slot_cap, PCI_EXP_SLTCAP_HPC),
-		FLAG(slot_cap, PCI_EXP_SLTCAP_HPS),
+		FLAG(slot_cap, PCI_EXP_SLTCAP_PCP),
+		FLAG(slot_cap, PCI_EXP_SLTCAP_MRLSP),
 		FLAG(slot_cap, PCI_EXP_SLTCAP_EIP),
 		FLAG(slot_cap, PCI_EXP_SLTCAP_NCCS),
-		FLAG(link_cap, PCI_EXP_LNKCAP_DLLLARC),
-		pdev->broken_cmd_compl ? " (with Cmd Compl erratum)" : "");
+		FLAG(link_cap, PCI_EXP_LNKCAP_DLLLARC));
 
 	if (pcie_init_slot(ctrl))
 		goto abort_ctrl;
@@ -897,21 +857,3 @@ void pciehp_release_ctrl(struct controller *ctrl)
 	pcie_cleanup_slot(ctrl);
 	kfree(ctrl);
 }
-
-static void quirk_cmd_compl(struct pci_dev *pdev)
-{
-	u32 slot_cap;
-
-	if (pci_is_pcie(pdev)) {
-		pcie_capability_read_dword(pdev, PCI_EXP_SLTCAP, &slot_cap);
-		if (slot_cap & PCI_EXP_SLTCAP_HPC &&
-		    !(slot_cap & PCI_EXP_SLTCAP_NCCS))
-			pdev->broken_cmd_compl = 1;
-	}
-}
-DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_INTEL, PCI_ANY_ID,
-			      PCI_CLASS_BRIDGE_PCI, 8, quirk_cmd_compl);
-DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_QCOM, 0x0400,
-			      PCI_CLASS_BRIDGE_PCI, 8, quirk_cmd_compl);
-DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_QCOM, 0x0401,
-			      PCI_CLASS_BRIDGE_PCI, 8, quirk_cmd_compl);

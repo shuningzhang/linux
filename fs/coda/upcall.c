@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Mostly platform independent upcall operations to Venus:
  *  -- upcalls
@@ -16,7 +15,7 @@
  */
 
 #include <linux/signal.h>
-#include <linux/sched/signal.h>
+#include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
@@ -354,7 +353,7 @@ int venus_readlink(struct super_block *sb, struct CodaFid *fid,
         char *result;
         
 	insize = max_t(unsigned int,
-		     INSIZE(readlink), OUTSIZE(readlink)+ *length);
+		     INSIZE(readlink), OUTSIZE(readlink)+ *length + 1);
 	UPARG(CODA_READLINK);
 
         inp->coda_readlink.VFid = *fid;
@@ -362,8 +361,8 @@ int venus_readlink(struct super_block *sb, struct CodaFid *fid,
 	error = coda_upcall(coda_vcp(sb), insize, &outsize, inp);
 	if (!error) {
 		retlen = outp->coda_readlink.count;
-		if (retlen >= *length)
-			retlen = *length - 1;
+		if ( retlen > *length )
+			retlen = *length;
 		*length = retlen;
 		result =  (char *)outp + (long)outp->coda_readlink.data;
 		memcpy(buffer, result, retlen);
@@ -447,7 +446,8 @@ int venus_fsync(struct super_block *sb, struct CodaFid *fid)
 	UPARG(CODA_FSYNC);
 
 	inp->coda_fsync.VFid = *fid;
-	error = coda_upcall(coda_vcp(sb), insize, &outsize, inp);
+	error = coda_upcall(coda_vcp(sb), sizeof(union inputArgs),
+			    &outsize, inp);
 
 	CODA_FREE(inp, insize);
 	return error;
