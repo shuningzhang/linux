@@ -492,10 +492,15 @@ void path_put(const struct path *path)
 }
 EXPORT_SYMBOL(path_put);
 
+/**
+ * nameidata 查找上下文
+ * 作为路径查找的中间变量，用于存储中间结果及最后的查找结果。
+ *
+ * */
 struct nameidata {
-	struct path	path;
+	struct path	path;  /* 当前已经查找到的路径，同时用于进行下一次的查找。在初次查找时设置为初始路径。 */
 	struct qstr	last;
-	struct path	root;
+	struct path	root;  /* 查询的根目录 */
 	struct inode	*inode; /* path.dentry.d_inode */
 	unsigned int	flags;
 	unsigned	seq, m_seq;
@@ -1923,7 +1928,15 @@ static int path_init(int dfd, const struct filename *name, unsigned int flags,
 	nd->root.mnt = NULL;
 
 	nd->m_seq = read_seqbegin(&mount_lock);
+	/** 
+	 * 针对dfd的三种场景，第一个判断处理绝对路径的场景。
+	 * 后面两个分支分别处理dfd为AT_FDCWD和文件句柄的场景。
+	 * */
 	if (*s == '/') {
+		/**
+		 * 
+		 * 快速查找模式
+		 * */
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
 			nd->seq = set_root_rcu(nd);
@@ -1987,6 +2000,9 @@ static int path_init(int dfd, const struct filename *name, unsigned int flags,
 	return -ECHILD;
 done:
 	current->total_link_count = 0;
+	/**
+	 *  
+	 * */
 	return link_path_walk(s, nd);
 }
 
