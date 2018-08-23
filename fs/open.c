@@ -999,6 +999,15 @@ struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 }
 EXPORT_SYMBOL(file_open_root);
 
+/**
+ * do_sys_open - 打开一个文件
+ * @dfd:	基目录参数,分如下几种情况
+ *		1) 绝对目录场景,该参数将被忽略
+ *		2) 相对路径场景:
+ *			a. 如果dfd为特殊值AT_FDCWD,则被解释为相对于调用进程的当前工作目录
+ *			b. 如果非上述特殊值,则相对于dfd所指向的基目录
+ * 
+ * */
 long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 {
 	struct open_flags op;
@@ -1008,6 +1017,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	if (fd)
 		return fd;
 
+	/*将用户态的文件名字符串拷贝到内核态,并转换为filename结构体形式*/
 	tmp = getname(filename);
 	if (IS_ERR(tmp))
 		return PTR_ERR(tmp);
