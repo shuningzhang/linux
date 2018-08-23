@@ -3269,6 +3269,10 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	if (unlikely(error))
 		goto out;
 
+	/**
+	 * 进行文件打开或者创建的最后一步动作.
+	 *
+	 * */
 	error = do_last(nd, &path, file, op, &opened, pathname);
 	while (unlikely(error > 0)) { /* trailing symlink */
 		struct path link = path;
@@ -3309,6 +3313,7 @@ out2:
 	return file;
 }
 
+
 struct file *do_filp_open(int dfd, struct filename *pathname,
 		const struct open_flags *op)
 {
@@ -3316,6 +3321,10 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 	int flags = op->lookup_flags;
 	struct file *filp;
 
+	/*
+	 * 首先采用快速打开模式, 提高打开文件的性能.具体实现方式是通过
+	 * LOOKUP_RCU进行标示.
+	 * */
 	filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_RCU);
 	if (unlikely(filp == ERR_PTR(-ECHILD)))
 		filp = path_openat(dfd, pathname, &nd, op, flags);
