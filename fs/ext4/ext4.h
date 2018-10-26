@@ -162,9 +162,9 @@ struct ext4_allocation_request {
 				 EXT4_MAP_UNWRITTEN | EXT4_MAP_BOUNDARY)
 
 struct ext4_map_blocks {
-	ext4_fsblk_t m_pblk;
-	ext4_lblk_t m_lblk;
-	unsigned int m_len;
+	ext4_fsblk_t m_pblk;	/* 数据在磁盘的地址, 以文件系统块为单位 */
+	ext4_lblk_t m_lblk;	/* 数据在文件中的地址,也即逻辑地址 */
+	unsigned int m_len;	/* 需要映射的文件块的数量 */
 	unsigned int m_flags;
 };
 

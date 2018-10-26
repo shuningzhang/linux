@@ -513,6 +513,7 @@ int ext4_map_blocks(handle_t *handle, struct inode *inode,
 	if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS)) {
 		retval = ext4_ext_map_blocks(handle, inode, map, flags &
 					     EXT4_GET_BLOCKS_KEEP_SIZE);
+		/* 上面函数会更新map中的映射关系,包括起始位置,旗标和长度 */
 	} else {
 		retval = ext4_ind_map_blocks(handle, inode, map, flags &
 					     EXT4_GET_BLOCKS_KEEP_SIZE);
@@ -535,6 +536,7 @@ int ext4_map_blocks(handle_t *handle, struct inode *inode,
 		    ext4_find_delalloc_range(inode, map->m_lblk,
 					     map->m_lblk + map->m_len - 1))
 			status |= EXTENT_STATUS_DELAYED;
+		/* */
 		ret = ext4_es_insert_extent(inode, map->m_lblk,
 					    map->m_len, map->m_pblk, status);
 		if (ret < 0)
@@ -2417,6 +2419,7 @@ static int ext4_writepages(struct address_space *mapping,
 	if (!mapping->nrpages || !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
 		goto out_writepages;
 
+	/* 将文件数据也写日志的场景 */
 	if (ext4_should_journal_data(inode)) {
 		struct blk_plug plug;
 

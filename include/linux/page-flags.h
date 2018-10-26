@@ -72,27 +72,27 @@
  * SPARSEMEM_EXTREME with !SPARSEMEM_VMEMMAP).
  */
 enum pageflags {
-	PG_locked,		/* Page is locked. Don't touch. */
+/*00*/	PG_locked,		/* Page is locked. Don't touch. */
 	PG_error,
 	PG_referenced,
 	PG_uptodate,
 	PG_dirty,
-	PG_lru,
+/*05*/	PG_lru,
 	PG_active,
 	PG_slab,
 	PG_owner_priv_1,	/* Owner use. If pagecache, fs may use*/
 	PG_arch_1,
-	PG_reserved,
+/*10*/	PG_reserved,
 	PG_private,		/* If pagecache, has fs-private data */
 	PG_private_2,		/* If pagecache, has fs aux data */
 	PG_writeback,		/* Page is under writeback */
 #ifdef CONFIG_PAGEFLAGS_EXTENDED
 	PG_head,		/* A head page */
-	PG_tail,		/* A tail page */
+/*15*/	PG_tail,		/* A tail page */
 #else
 	PG_compound,		/* A compound page */
 #endif
-	PG_swapcache,		/* Swap page: swp_entry_t in private */
+/*16*/	PG_swapcache,		/* Swap page: swp_entry_t in private */
 	PG_mappedtodisk,	/* Has blocks allocated on-disk */
 	PG_reclaim,		/* To be reclaimed asap */
 	PG_swapbacked,		/* Page is backed by RAM/swap */

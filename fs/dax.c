@@ -117,7 +117,7 @@ static ssize_t dax_io(struct inode *inode, struct iov_iter *iter,
 		if (pos == max) {
 			unsigned blkbits = inode->i_blkbits;
 			sector_t block = pos >> blkbits;
-			unsigned first = pos - (block << blkbits);
+			unsigned first = pos - (block << blkbits); /*转换为块对齐的位置*/
 			long size;
 
 			if (pos == bh_max) {

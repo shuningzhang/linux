@@ -1437,6 +1437,7 @@ static struct page *new_slab(struct kmem_cache *s, gfp_t flags, int node)
 
 	kasan_poison_slab(page);
 
+	/**/
 	for_each_object_idx(p, idx, s, start, page->objects) {
 		setup_object(s, page, p);
 		if (likely(idx < page->objects))
@@ -2378,6 +2379,9 @@ load_freelist:
 	local_irq_restore(flags);
 	return freelist;
 
+	/*
+	 *
+	 * */
 new_slab:
 
 	if (c->partial) {
@@ -2469,6 +2473,9 @@ redo:
 
 	object = c->freelist;
 	page = c->page;
+	/*
+	 * if there is no slab in per-cpu, we should find from node or buddy system. 
+	 * */
 	if (unlikely(!object || !node_match(page, node))) {
 		object = __slab_alloc(s, gfpflags, node, addr, c);
 		stat(s, ALLOC_SLOWPATH);

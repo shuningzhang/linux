@@ -63,6 +63,13 @@
  * block_size % 12 >= 4 for at least all powers of 2 greater than 512, which
  * covers all valid ext4 block sizes.  Therefore, this tail structure can be
  * crammed into the end of the block without having to rebalance the tree.
+ *        inode
+ *        /
+ *       /
+ * ext4_extent_idx
+ * /        |       \
+ * block   block    block
+ *                  |ext4_extent
  */
 struct ext4_extent_tail {
 	__le32	et_checksum;	/* crc32c(uuid+inum+extent_block) */
@@ -188,6 +195,10 @@ static inline unsigned short ext_depth(struct inode *inode)
 	return le16_to_cpu(ext_inode_hdr(inode)->eh_depth);
 }
 
+/*
+ * 将未写状态的extent的长度字段添加未写标识,也即将ee_len的最高
+ * 未设置为1
+ * */
 static inline void ext4_ext_mark_unwritten(struct ext4_extent *ext)
 {
 	/* We can not have an unwritten extent of zero length! */
@@ -201,6 +212,10 @@ static inline int ext4_ext_is_unwritten(struct ext4_extent *ext)
 	return (le16_to_cpu(ext->ee_len) > EXT_INIT_MAX_LEN);
 }
 
+/*
+ * 由于extent有未写和初始化两种状态,因此需要根据最高位分别处理
+ * 得到该extent实际的长度.
+ * */
 static inline int ext4_ext_get_actual_len(struct ext4_extent *ext)
 {
 	return (le16_to_cpu(ext->ee_len) <= EXT_INIT_MAX_LEN ?

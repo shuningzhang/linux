@@ -784,6 +784,9 @@ ext4_ext_binsearch_idx(struct inode *inode,
  * binary search for closest extent of the given block
  * the header must be checked before calling this
  */
+/*
+ * 该函数是对B+树的叶子节点内的extent进行二分查找，完成
+ * 查找路径（path）最后一个分量的初始化。 */
 static void
 ext4_ext_binsearch(struct inode *inode,
 		struct ext4_ext_path *path, ext4_lblk_t block)
@@ -1435,16 +1438,28 @@ static int ext4_ext_search_left(struct inode *inode,
 	/* usually extent in the path covers blocks smaller
 	 * then *logical, but it can be that extent is the
 	 * first one in the file */
-
+	/*
+	 * 通常在path中的extent覆盖的磁盘块逻辑地址要小于请求的逻辑地址,
+	 * 但其可以是文件中的第一个extent，此时请求的逻辑地址可能会小于
+	 * path中extent记录的逻辑地址。这种情况出现在空洞文件的情况。*/
 	ex = path[depth].p_ext;
 	ee_len = ext4_ext_get_actual_len(ex);
+	/*
+	 * 请求逻辑起始地址比查找到的extent的起始地址小，说明此文件含有
+	 * 空洞，且查找到的extent在当前是本文件的第一个extent。
+	 * */
 	if (*logical < le32_to_cpu(ex->ee_block)) {
+		/*
+		 * 如果该extent是本文件的第一个extent，那么在B+树的叶子节点中
+		 * 也应该是第一个，否则说明存在问题。*/
 		if (unlikely(EXT_FIRST_EXTENT(path[depth].p_hdr) != ex)) {
 			EXT4_ERROR_INODE(inode,
 					 "EXT_FIRST_EXTENT != ex *logical %d ee_block %d!",
 					 *logical, le32_to_cpu(ex->ee_block));
 			return -EIO;
 		}
+		/*
+		 * 同理，路径中记录的各层的索引节点在block中也应该是第一个。*/
 		while (--depth >= 0) {
 			ix = path[depth].p_idx;
 			if (unlikely(ix != EXT_FIRST_INDEX(path[depth].p_hdr))) {
@@ -1460,6 +1475,9 @@ static int ext4_ext_search_left(struct inode *inode,
 		return 0;
 	}
 
+	/*
+	 * 运行到此，说明ex->ee_block < logical < ex->ee_block+ee_len, 此时应该
+	 * 满足该extent可用的场景， 理论上不应该运行到这里，因此返回错误。 */
 	if (unlikely(*logical < (le32_to_cpu(ex->ee_block) + ee_len))) {
 		EXT4_ERROR_INODE(inode,
 				 "logical %d < ee_block %d + ee_len %d!",
@@ -1467,6 +1485,8 @@ static int ext4_ext_search_left(struct inode *inode,
 		return -EIO;
 	}
 
+	/*
+	 * 为什么要更新这个逻辑地址？*/
 	*logical = le32_to_cpu(ex->ee_block) + ee_len - 1;
 	*phys = ext4_ext_pblock(ex) + ee_len - 1;
 	return 0;
@@ -1970,6 +1990,10 @@ int ext4_ext_insert_extent(handle_t *handle, struct inode *inode,
 			ex -= 1;
 
 		/* Try to append newex to the ex */
+		/* 尝试将新的extent追加到当前extent之后，这里判断新的
+		 * extent是否可以合并。首先要判断逻辑地址的连续性以及
+		 * extent属性的一致性，然后判断物理地址的连续性。只有
+		 * 完全符合条件的情况下才能合并。 */
 		if (ext4_can_extents_be_merged(inode, ex, newext)) {
 			ext_debug("append [%d]%d block to %u:[%d]%d"
 				  "(from %llu)\n",
@@ -1995,6 +2019,7 @@ int ext4_ext_insert_extent(handle_t *handle, struct inode *inode,
 
 prepend:
 		/* Try to prepend newex to the ex */
+		/* */
 		if (ext4_can_extents_be_merged(inode, newext, ex)) {
 			ext_debug("prepend %u[%d]%d block to %u:[%d]%d"
 				  "(from %llu)\n",

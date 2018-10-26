@@ -1274,11 +1274,11 @@ struct sb_writers {
 };
 
 struct super_block {
-	struct list_head	s_list;		/* Keep this first */
-	dev_t			s_dev;		/* search index; _not_ kdev_t */
-	unsigned char		s_blocksize_bits;
-	unsigned long		s_blocksize;
-	loff_t			s_maxbytes;	/* Max file size */
+	struct list_head	s_list;			/* Keep this first */
+	dev_t			s_dev;			/* search index; _not_ kdev_t */
+	unsigned char		s_blocksize_bits;	/* 块大小的位数 */
+	unsigned long		s_blocksize;		/* 文件系统块大小,EXT4默认是4096 */
+	loff_t			s_maxbytes;		/* Max file size */
 	struct file_system_type	*s_type;
 	const struct super_operations	*s_op;
 	const struct dquot_operations	*dq_op;
