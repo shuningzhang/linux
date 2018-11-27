@@ -1784,6 +1784,7 @@ static int __ocfs2_find_path(struct ocfs2_caching_info *ci,
 	struct ocfs2_extent_list *el;
 	struct ocfs2_extent_rec *rec;
 
+	/* 循环遍历，一直找到叶子节点 */
 	el = root_el;
 	while (el->l_tree_depth) {
 		if (le16_to_cpu(el->l_next_free_rec) == 0) {
@@ -1807,6 +1808,9 @@ static int __ocfs2_find_path(struct ocfs2_caching_info *ci,
 			 */
 			range = le32_to_cpu(rec->e_cpos) +
 				ocfs2_rec_clusters(el, rec);
+			/* 
+			 * 如果当前需要的簇偏移在已有extent管理的簇范围内，则使用
+			 * 该extent, 也即可以使用该extent。 */
 			if (cpos >= le32_to_cpu(rec->e_cpos) && cpos < range)
 			    break;
 		}

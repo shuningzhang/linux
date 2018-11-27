@@ -1278,6 +1278,8 @@ static void ocfs2_free_write_ctxt(struct ocfs2_write_ctxt *wc)
 	kfree(wc);
 }
 
+/* 分配一个新的写数据上下文对象， 将写请求的逻辑偏移和长度转换为ocfs2
+ * 文件系统的簇。*/
 static int ocfs2_alloc_write_ctxt(struct ocfs2_write_ctxt **wcp,
 				  struct ocfs2_super *osb, loff_t pos,
 				  unsigned len, struct buffer_head *di_bh)

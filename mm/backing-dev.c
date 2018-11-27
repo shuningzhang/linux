@@ -240,10 +240,13 @@ static __init int bdi_class_init(void)
 }
 postcore_initcall(bdi_class_init);
 
+/*
+ * 刷写任务初始化，在内核初始化的时候被调用 */
 static int __init default_bdi_init(void)
 {
 	int err;
 
+	/* 新建一个工作队列，起始是创建一个线程。 */
 	bdi_wq = alloc_workqueue("writeback", WQ_MEM_RECLAIM | WQ_FREEZABLE |
 					      WQ_UNBOUND | WQ_SYSFS, 0);
 	if (!bdi_wq)

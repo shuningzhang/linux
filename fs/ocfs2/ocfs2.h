@@ -717,6 +717,11 @@ static inline u64 ocfs2_clusters_to_blocks(struct super_block *sb,
 	return (u64)clusters << c_to_b_bits;
 }
 
+/*
+ * 实现以块为单位的逻辑偏移到簇（cluster）为单位的逻辑偏移的转换。
+ * 例如4K块和128K，此时32个块相当于一个簇。如果此时输入为64，则
+ * 转换完后为2。
+ * */
 static inline u32 ocfs2_blocks_to_clusters(struct super_block *sb,
 					   u64 blocks)
 {
@@ -726,6 +731,9 @@ static inline u32 ocfs2_blocks_to_clusters(struct super_block *sb,
 	return (u32)(blocks >> b_to_c_bits);
 }
 
+/* 将字节为单位的数据长度转换为以簇为单位的长度，以128KB的簇为例，如果
+ * 数据长度为100KB，则该数据占用一个簇。如果数据长度为200KB，则占用2个
+ * 簇。*/
 static inline unsigned int ocfs2_clusters_for_bytes(struct super_block *sb,
 						    u64 bytes)
 {

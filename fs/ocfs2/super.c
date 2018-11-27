@@ -753,6 +753,8 @@ out:
 	return ret;
 }
 
+/*
+ * 探测磁盘内容，确保合法性。 */
 static int ocfs2_sb_probe(struct super_block *sb,
 			  struct buffer_head **bh,
 			  int *sector_size,
@@ -784,6 +786,10 @@ static int ocfs2_sb_probe(struct super_block *sb,
 		mlog_errno(status);
 		goto bail;
 	}
+	
+	/*
+	 * 对磁盘数据做合法性检查，如果磁盘格式为ocfs1的格式，
+	 * 则记录错误日志后退出。*/
 	hdr = (struct ocfs1_vol_disk_hdr *) (*bh)->b_data;
 	if (hdr->major_version == OCFS1_MAJOR_VERSION) {
 		mlog(ML_ERROR, "incompatible version: %u.%u\n",
@@ -809,6 +815,9 @@ static int ocfs2_sb_probe(struct super_block *sb,
 	 * blocksizes.  4096 is the maximum blocksize because it is
 	 * the minimum clustersize.
 	 */
+	/*
+	 * OCFS2的超级块是在磁盘2块偏移处，而OCFS2的块大小可能是上述
+	 * 值之一，因此下面循环查找*/
 	status = -EINVAL;
 	for (blksize = *sector_size;
 	     blksize <= OCFS2_MAX_BLOCKSIZE;
@@ -821,9 +830,16 @@ static int ocfs2_sb_probe(struct super_block *sb,
 			mlog_errno(status);
 			break;
 		}
+
+		/*
+		 * 超级块也是存在一个ocfs2_dinode节点中，因此这里将
+		 * 读取的数据转换为ocfs2_dinode指针类型。*/
 		di = (struct ocfs2_dinode *) (*bh)->b_data;
 		memset(stats, 0, sizeof(struct ocfs2_blockcheck_stats));
 		spin_lock_init(&stats->b_lock);
+		/*
+		 * 这里做数据合法性检查，确保是OCFS2文件系统，且超级块
+		 * 数据正确。*/
 		tmpstat = ocfs2_verify_volume(di, *bh, blksize, stats);
 		if (tmpstat < 0) {
 			brelse(*bh);
@@ -2035,6 +2051,9 @@ static int ocfs2_journal_addressable(struct ocfs2_super *osb)
 	return status;
 }
 
+/*
+ * 完成文件系统超级块信息初始化。
+ * */
 static int ocfs2_initialize_super(struct super_block *sb,
 				  struct buffer_head *bh,
 				  int sector_size,

@@ -468,9 +468,10 @@ struct ocfs2_block_check {
 struct ocfs2_extent_rec {
 /*00*/	__le32 e_cpos;		/* Offset into the file, in clusters */
 	union {
-		__le32 e_int_clusters; /* Clusters covered by all children */
+		__le32 e_int_clusters; /* 如果为非叶子节点时使用，Clusters covered by all children */
 		struct {
-			__le16 e_leaf_clusters; /* Clusters covered by this
+			__le16 e_leaf_clusters; /* 叶子节点时使用，表示该extent覆盖的簇的数量。
+						   Clusters covered by this
 						   extent */
 			__u8 e_reserved1;
 			__u8 e_flags; /* Extent flags */

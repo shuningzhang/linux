@@ -262,6 +262,8 @@ static int ocfs2_init_locked_inode(struct inode *inode, void *opaque)
 	return 0;
 }
 
+/*
+ * 填充inode信息，这里填充ocfs2相关的具体信息。*/
 void ocfs2_populate_inode(struct inode *inode, struct ocfs2_dinode *fe,
 			  int create_ino)
 {
@@ -493,6 +495,8 @@ static int ocfs2_read_locked_inode(struct inode *inode,
 		}
 	}
 
+	/*
+	 * 下面代码具体从磁盘读取inode的信息。*/
 	if (can_lock) {
 		status = ocfs2_read_inode_block_full(inode, &bh,
 						     OCFS2_BH_IGNORE_CACHE);

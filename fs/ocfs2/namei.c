@@ -288,12 +288,16 @@ static int ocfs2_mknod(struct inode *dir,
 		goto leave;
 	}
 
+	/*
+	 * 检查是否已经存在相同名称的项。*/
 	status = ocfs2_check_dir_for_entry(dir, dentry->d_name.name,
 					   dentry->d_name.len);
 	if (status)
 		goto leave;
 
 	/* get a spot inside the dir. */
+	/*
+	 * 插入前的准备工作，查找存出目录项的磁盘空间，并读入内存。 */
 	status = ocfs2_prepare_dir_for_insert(osb, dir, parent_fe_bh,
 					      dentry->d_name.name,
 					      dentry->d_name.len, &lookup);
