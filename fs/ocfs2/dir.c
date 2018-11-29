@@ -801,6 +801,8 @@ static int ocfs2_dx_dir_lookup_rec(struct inode *inode,
 	struct ocfs2_extent_rec *rec = NULL;
 
 	if (el->l_tree_depth) {
+		/* 查找可以放置该extent的叶子节点，返回叶子节点所在的磁盘
+		 * 逻辑块的数据。 */
 		ret = ocfs2_find_leaf(INODE_CACHE(inode), el, major_hash,
 				      &eb_bh);
 		if (ret) {
@@ -3370,6 +3372,8 @@ bail:
 	return status;
 }
 
+/*
+ * 针对inline情况的文件夹，在文件夹inode节点的内部查找可用的空间。*/
 static int ocfs2_find_dir_space_id(struct inode *dir, struct buffer_head *di_bh,
 				   const char *name, int namelen,
 				   struct buffer_head **ret_de_bh,

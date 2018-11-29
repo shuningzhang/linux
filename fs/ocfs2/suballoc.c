@@ -793,6 +793,9 @@ bail:
 	return status;
 }
 
+/* 保留需要的位图位数, 该函数是一个公共函数，根据type类型的不同，会
+ * 进行不同的处理操作。
+ * */
 static int ocfs2_reserve_suballoc_bits(struct ocfs2_super *osb,
 				       struct ocfs2_alloc_context *ac,
 				       int type,
@@ -845,6 +848,8 @@ static int ocfs2_reserve_suballoc_bits(struct ocfs2_super *osb,
 
 	if (bits_wanted > free_bits) {
 		/* cluster bitmap never grows */
+		/* 如果是全局位图表，由于已经固定（磁盘空间大小固定），不能再
+		 * 进行增加。 */
 		if (ocfs2_is_cluster_bitmap(alloc_inode)) {
 			trace_ocfs2_reserve_suballoc_bits_nospc(bits_wanted,
 								free_bits);
@@ -852,6 +857,7 @@ static int ocfs2_reserve_suballoc_bits(struct ocfs2_super *osb,
 			goto bail;
 		}
 
+		/* 如果参数中没有ALLOC_NEW_GROUP的标示，则不会动态扩容。 */
 		if (!(flags & ALLOC_NEW_GROUP)) {
 			trace_ocfs2_reserve_suballoc_bits_no_new_group(
 						slot, bits_wanted, free_bits);

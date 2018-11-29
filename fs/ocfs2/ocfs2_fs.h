@@ -520,10 +520,17 @@ struct ocfs2_extent_list {
  * ocfs2_dinode.id2.i_chain.
  */
 struct ocfs2_chain_list {
-/*00*/	__le16 cl_cpg;			/* Clusters per Block Group */
-	__le16 cl_bpc;			/* Bits per cluster */
-	__le16 cl_count;		/* Total chains in this list */
-	__le16 cl_next_free_rec;	/* Next unused chain slot */
+/*00*/	__le16 cl_cpg;			/* 块组中簇的数量 */
+	__le16 cl_bpc;			/* 每个簇需要的位图的数量，位数。例如簇大小
+                                           是128K，块大小是4K，则需要32个为来标记块
+                                           的使用情况。*/
+	__le16 cl_count;		/* 本chain list可以存储的chain总量，也即最多
+					   可以有多少个chain。 这个值是根据块的大小计
+					   算出来的， 以4K块为例，ocfs2_dinode和
+					   ocfs2_chain_list的描述信息会占用一部分空间，
+					   ocfs2_chain_rec每项占用16字节，因此最多有
+					   243个chain。 */
+	__le16 cl_next_free_rec;	/* 本列表中，下一个没有使用的rec的槽位编号 */
 	__le64 cl_reserved1;
 /*10*/	struct ocfs2_chain_rec cl_recs[0];	/* Chain records */
 };
@@ -855,22 +862,22 @@ struct ocfs2_dx_entry_list {
  */
 struct ocfs2_dx_root_block {
 	__u8		dr_signature[8];	/* Signature for verification */
-	struct ocfs2_block_check dr_check;	/* Error checking */
+/*10*/	struct ocfs2_block_check dr_check;	/* Error checking */
 	__le16		dr_suballoc_slot;	/* Slot suballocator this
 						 * block belongs to. */
 	__le16		dr_suballoc_bit;	/* Bit offset in suballocator
 						 * block group */
-	__le32		dr_fs_generation;	/* Must match super block */
+/*20*/	__le32		dr_fs_generation;	/* Must match super block */
 	__le64		dr_blkno;		/* Offset on disk, in blocks */
 	__le64		dr_last_eb_blk;		/* Pointer to last
 						 * extent block */
-	__le32		dr_clusters;		/* Clusters allocated
+/*30*/	__le32		dr_clusters;		/* Clusters allocated
 						 * to the indexed tree. */
 	__u8		dr_flags;		/* OCFS2_DX_FLAG_* flags */
 	__u8		dr_reserved0;
 	__le16		dr_reserved1;
 	__le64		dr_dir_blkno;		/* Pointer to parent inode */
-	__le32		dr_num_entries;		/* Total number of
+/*40*/	__le32		dr_num_entries;		/* Total number of
 						 * names stored in
 						 * this directory.*/
 	__le32		dr_reserved2;

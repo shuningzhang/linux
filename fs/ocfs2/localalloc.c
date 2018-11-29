@@ -994,11 +994,19 @@ static int ocfs2_sync_local_to_main(struct ocfs2_super *osb,
 
 	while ((bit_off = ocfs2_find_next_zero_bit(bitmap, left, start))
 	       != -1) {
+		/* 处理一开始就为0的情况，如果前面就有为0的位，则跳过。
+		 * 例如00000 11110 000，则此时前五个查询都满足bit_off与
+		 * start相等，因此会执行continue。直到第10个0，此时两者
+		 * 不再相等，则继续后面处理。*/
 		if ((bit_off < left) && (bit_off == start)) {
 			count++;
 			start++;
 			continue;
 		}
+
+		/* 如果count大于0，则说明本地分配有释放的簇，此时需要进行
+		 * 簇的释放动作。 
+		 * 本地分配与全局分配的同步策略？*/
 		if (count) {
 			blkno = la_start_blk +
 				ocfs2_clusters_to_blocks(osb->sb,
